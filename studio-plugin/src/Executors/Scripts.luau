@@ -204,6 +204,85 @@ handlers.SearchScriptSource = function(payload)
 	return { matches = matches, truncated = #matches >= maxResults }
 end
 
+handlers.FindAndReplaceInScripts = function(payload)
+	local root = PathResolver.mustResolve(payload.root or "game")
+	local find = payload.find :: string
+	local replace = payload.replace :: string
+	local caseSensitive = payload.caseSensitive ~= false
+	local maxScripts = payload.maxScripts or 500
+	local dryRun = payload.dryRun == true
+
+	local needle = if caseSensitive then find else string.lower(find)
+	local changes = {}
+	local totalReplacements = 0
+	local scriptsChanged = 0
+
+	local containers: { Instance } = if root:IsA("LuaSourceContainer") then { root } else root:GetDescendants()
+	for _, descendant in containers do
+		if scriptsChanged >= maxScripts then
+			break
+		end
+		if not descendant:IsA("LuaSourceContainer") then
+			continue
+		end
+		if payload.classFilter and descendant.ClassName ~= payload.classFilter then
+			continue
+		end
+
+		local source = Serialization.getScriptSource(descendant)
+
+		-- Count literal occurrences (case-aware).
+		local haystack = if caseSensitive then source else string.lower(source)
+		local occurrences = 0
+		local searchFrom = 1
+		local positions: { number } = {}
+		while true do
+			local foundAt = string.find(haystack, needle, searchFrom, true)
+			if not foundAt then
+				break
+			end
+			occurrences += 1
+			table.insert(positions, foundAt)
+			searchFrom = foundAt + math.max(#needle, 1)
+		end
+		if occurrences == 0 then
+			continue
+		end
+
+		if not dryRun then
+			-- Rebuild the source from literal positions (safe for any characters,
+			-- correct for case-insensitive matches).
+			local pieces = {}
+			local cursor = 1
+			for _, position in positions do
+				table.insert(pieces, string.sub(source, cursor, position - 1))
+				table.insert(pieces, replace)
+				cursor = position + #find
+			end
+			table.insert(pieces, string.sub(source, cursor))
+			Serialization.setScriptSource(descendant, table.concat(pieces))
+		end
+
+		scriptsChanged += 1
+		totalReplacements += occurrences
+		table.insert(changes, {
+			path = PathResolver.pathOf(descendant),
+			replacements = occurrences,
+		})
+	end
+
+	if not dryRun and scriptsChanged > 0 then
+		waypoint(("Find/replace in %d scripts"):format(scriptsChanged))
+	end
+	return {
+		dryRun = dryRun,
+		scriptsChanged = scriptsChanged,
+		totalReplacements = totalReplacements,
+		changes = changes,
+		truncated = scriptsChanged >= maxScripts,
+	}
+end
+
 handlers.ListScripts = function(payload)
 	local root = PathResolver.mustResolve(payload.root or "game")
 	local scripts = {}

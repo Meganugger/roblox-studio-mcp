@@ -3,8 +3,8 @@
 -- plugin settings and are managed through the UI widget.
 
 return {
-	PLUGIN_VERSION = "1.0.0",
-	PROTOCOL_VERSION = 1,
+	PLUGIN_VERSION = "2.0.0",
+	PROTOCOL_VERSION = 2,
 	DEFAULT_PORT = 3667,
 	HOST = "127.0.0.1",
 

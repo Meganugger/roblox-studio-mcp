@@ -9,6 +9,7 @@ local RunCode = require(script.RunCode)
 local Project = require(script.Project)
 local Playtest = require(script.Playtest)
 local World = require(script.World)
+local Breakpoints = require(script.Breakpoints)
 
 export type Handler = (payload: { [string]: any }) -> any
 
@@ -31,6 +32,7 @@ merge(RunCode)
 merge(Project)
 merge(Playtest)
 merge(World)
+merge(Breakpoints)
 
 handlers.Ping = function(payload)
 	return { pong = true, sentAt = payload.sentAt }

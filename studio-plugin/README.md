@@ -5,11 +5,15 @@ commands, captures output, and reports results.
 
 ## Install (prebuilt)
 
-`npm run build:plugin` at the repo root produces `dist/RobloxStudioMCP.rbxmx`.
-Copy it into your Studio plugins folder:
+`npm run build:plugin` at the repo root produces `dist/RobloxStudioMCP.rbxmx`, then:
 
-- Windows: `%LOCALAPPDATA%\Roblox\Plugins\`
-- macOS: `~/Documents/Roblox/Plugins/`
+```bash
+node server/dist/index.js --install-plugin
+```
+
+copies it into your Studio plugins folder automatically (Windows:
+`%LOCALAPPDATA%\Roblox\Plugins\`, macOS: `~/Documents/Roblox/Plugins/`, override with
+`MCP_PLUGINS_DIR`). Fully close and reopen Studio afterwards.
 
 ## Build with Rojo (optional)
 
@@ -24,9 +28,9 @@ equivalent artifacts.
 
 | Module | Purpose |
 | --- | --- |
-| `Main.server.luau` | Entry: wires UI + bridge + capture; auto-connects with saved token |
-| `Bridge.luau` | Handshake, long-poll loop, backoff reconnect, result delivery |
-| `Executors/` | Command handlers (instances, scripts, run-code, project, playtest, world) |
+| `Main.server.luau` | Entry: full UI in edit mode; headless auto-connect inside playtest DataModels |
+| `Bridge.luau` | Session identity + context detection, handshake, long-poll loop, backoff reconnect, result delivery |
+| `Executors/` | Command handlers (instances, scripts, run-code, project, playtest, breakpoints, world) |
 | `Serialization.luau` | Property value encode/decode (mirror of `shared/src/properties.ts`) |
 | `PathResolver.luau` | `game.Workspace.Foo` paths ⇆ instances, `Name[n]` disambiguation |
 | `OutputCapture.luau` | LogService/ScriptContext ring buffer for logs and stack traces |
@@ -35,6 +39,9 @@ equivalent artifacts.
 
 ## Behavior notes
 
+- During play-solo / multiplayer tests, Studio runs the plugin in every DataModel; each
+  instance auto-connects with the saved token as an independent `server` / `client` peer
+  (no UI), enabling live runtime evaluation and per-peer log capture.
 - All mutations record ChangeHistory waypoints (`MCP: …`) so users can undo agent work.
 - Protected containers (game, core services) refuse deletion/renaming.
 - The bridge only talks to `127.0.0.1` and sends the bearer token on every request.
