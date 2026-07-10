@@ -106,6 +106,34 @@ export function registerScriptTools(server: McpServer, ctx: ToolContext): void {
   );
 
   server.registerTool(
+    "find_and_replace_in_scripts",
+    {
+      title: "Find & replace across scripts (bulk)",
+      description:
+        "Literal (exact-text) find/replace across every script under a root, in one atomic Studio operation " +
+        "(single undo waypoint). Ideal for project-wide refactors: renaming a RemoteEvent, migrating a " +
+        "deprecated API call, updating a module path. Use dryRun=true first to preview per-script match " +
+        "counts without changing anything. Returns {scriptsChanged, totalReplacements, changes:[{path, replacements}]}.",
+      inputSchema: {
+        find: z.string().min(1).max(10_000).describe("Exact text to find (not a pattern)."),
+        replace: z.string().max(10_000).describe("Replacement text."),
+        root: instancePathSchema.default("game"),
+        caseSensitive: z.boolean().default(true),
+        classFilter: scriptClassSchema.optional(),
+        maxScripts: z.number().int().min(1).max(2000).default(500).describe("Safety cap on scripts modified."),
+        dryRun: z.boolean().default(false).describe("Only report matches; change nothing."),
+      },
+    },
+    async ({ find, replace, root, caseSensitive, classFilter, maxScripts, dryRun }) =>
+      runCommand(
+        ctx,
+        "FindAndReplaceInScripts",
+        { find, replace, root, caseSensitive, classFilter, maxScripts, dryRun },
+        120_000,
+      ),
+  );
+
+  server.registerTool(
     "list_scripts",
     {
       title: "List all scripts",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  errorResult,
   instancePathSchema,
   propertiesSchema,
   runCommand,
@@ -147,6 +148,44 @@ export function registerInstanceTools(server: McpServer, ctx: ToolContext): void
       },
     },
     async ({ path, properties }) => runCommand(ctx, "SetProperties", { path, properties }),
+  );
+
+  server.registerTool(
+    "mass_set_properties",
+    {
+      title: "Set properties on many instances (bulk)",
+      description:
+        "Set the same properties on many instances in one atomic Studio operation (single undo waypoint). " +
+        "Targets are either an explicit list of paths, or a filter (root + className and/or nameContains). " +
+        "Perfect for large places: re-materialize every wall, anchor all parts under a folder, retexture a " +
+        "whole map. Returns how many instances were updated plus any per-instance failures. " +
+        "Use dryRun=true to preview which instances would match without changing anything.",
+      inputSchema: {
+        paths: z.array(instancePathSchema).max(2000).optional().describe("Explicit target paths."),
+        root: instancePathSchema.optional().describe("Filter mode: search under this root."),
+        className: z.string().max(100).optional().describe('Filter: IsA class, e.g. "BasePart".'),
+        nameContains: z.string().max(200).optional().describe("Filter: case-insensitive name substring."),
+        properties: propertiesSchema,
+        maxInstances: z.number().int().min(1).max(5000).default(1000).describe("Safety cap on matched instances."),
+        dryRun: z.boolean().default(false).describe("Only report matching instances; change nothing."),
+      },
+    },
+    async ({ paths, root, className, nameContains, properties, maxInstances, dryRun }) => {
+      if (!paths && !root) {
+        return errorResult("Provide either `paths` or a filter (`root` plus className/nameContains).");
+      }
+      if (root && !className && !nameContains) {
+        return errorResult(
+          "Filter mode needs at least one of className / nameContains (refusing to bulk-edit every descendant).",
+        );
+      }
+      return runCommand(
+        ctx,
+        "MassSetProperties",
+        { paths, root, className, nameContains, properties, maxInstances, dryRun },
+        120_000,
+      );
+    },
   );
 
   server.registerTool(
