@@ -55,6 +55,7 @@ describe("plugin build", () => {
       ">Playtest<",
       ">World<",
       ">Project<",
+      ">Breakpoints<",
       ">Serialization<",
       ">PathResolver<",
       ">OutputCapture<",

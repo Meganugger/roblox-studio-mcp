@@ -1,21 +1,23 @@
 /**
  * Full-stack MCP test: connects a real MCP client to the server over an
- * in-memory transport, with a fake plugin behind the HTTP bridge, and
- * exercises tool listing plus a representative tool call.
+ * in-memory transport, with fake plugins behind the HTTP bridge, and
+ * exercises tool listing, routing (including per-peer routing) and errors.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { CommandQueue } from "../server/src/bridge/command-queue.js";
 import { HttpBridge } from "../server/src/bridge/http-bridge.js";
+import { SessionRegistry } from "../server/src/bridge/sessions.js";
 import { createMcpServer } from "../server/src/mcp/server.js";
 import { ServerConfig } from "../server/src/config.js";
-import { BridgeCommand, ENDPOINTS, PROTOCOL_VERSION } from "@roblox-studio-mcp/shared";
+import { BridgeCommand } from "@roblox-studio-mcp/shared";
+import { FakePlugin, FakePluginOptions } from "./helpers/fake-plugin.js";
 
 const TOKEN = "tools-test-token-1234567890";
 
 const EXPECTED_TOOLS = [
   "get_studio_status",
+  "get_connected_peers",
   "ping_studio",
   "get_instance_tree",
   "get_instance",
@@ -24,6 +26,7 @@ const EXPECTED_TOOLS = [
   "create_instance",
   "create_instances_batch",
   "set_instance_properties",
+  "mass_set_properties",
   "rename_instance",
   "move_instance",
   "clone_instance",
@@ -35,9 +38,12 @@ const EXPECTED_TOOLS = [
   "set_script_source",
   "patch_script_source",
   "search_script_source",
+  "find_and_replace_in_scripts",
   "list_scripts",
   "analyze_scripts",
   "run_luau",
+  "eval_server_runtime",
+  "eval_client_runtime",
   "get_project_info",
   "save_project",
   "export_project_snapshot",
@@ -47,6 +53,9 @@ const EXPECTED_TOOLS = [
   "get_output_logs",
   "get_errors",
   "clear_output_logs",
+  "set_log_breakpoint",
+  "list_log_breakpoints",
+  "clear_log_breakpoints",
   "generate_terrain",
   "clear_terrain",
   "set_lighting",
@@ -54,73 +63,56 @@ const EXPECTED_TOOLS = [
   "set_camera",
   "list_scaffolds",
   "install_scaffold",
+  "get_roblox_docs",
 ];
 
 describe("MCP tools", () => {
-  let queue: CommandQueue;
+  let sessions: SessionRegistry;
   let bridge: HttpBridge;
   let client: Client;
-  let pluginRunning = false;
   let baseUrl = "";
+  const plugins: FakePlugin[] = [];
 
   const config: ServerConfig = {
     bridgePort: 0,
     authToken: TOKEN,
+    transport: "stdio",
+    httpPort: 0,
+    httpHost: "127.0.0.1",
+    httpToken: "",
     allowRunLuau: true,
     allowInsertAsset: true,
     maxScriptSourceBytes: 512 * 1024,
     maxLuauCodeBytes: 256 * 1024,
   };
 
-  async function startFakePlugin(handler: (command: BridgeCommand) => unknown): Promise<void> {
-    await fetch(`${baseUrl}${ENDPOINTS.hello}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pluginVersion: "1.0.0",
-        protocolVersion: PROTOCOL_VERSION,
-        placeName: "ToolTest",
-        placeId: 1,
-        gameId: 1,
-      }),
-    });
-    pluginRunning = true;
-    void (async () => {
-      while (pluginRunning) {
-        try {
-          const res = await fetch(`${baseUrl}${ENDPOINTS.poll}`, {
-            headers: { Authorization: `Bearer ${TOKEN}` },
-          });
-          if (!pluginRunning || res.status !== 200) continue;
-          const command = (await res.json()) as BridgeCommand;
-          const result = handler(command);
-          await fetch(`${baseUrl}${ENDPOINTS.result}`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ id: command.id, ok: true, result }),
-          });
-        } catch {
-          if (pluginRunning) await new Promise((resolve) => setTimeout(resolve, 25));
-        }
-      }
-    })();
+  async function startFakePlugin(
+    handler: (command: BridgeCommand) => unknown,
+    options: Partial<FakePluginOptions> = {},
+  ): Promise<FakePlugin> {
+    const plugin = new FakePlugin({ baseUrl, token: TOKEN, handler, ...options });
+    plugins.push(plugin);
+    await plugin.hello();
+    plugin.start();
+    return plugin;
   }
 
   beforeEach(async () => {
-    queue = new CommandQueue();
-    bridge = new HttpBridge({ port: 0, authToken: TOKEN, queue });
+    sessions = new SessionRegistry();
+    bridge = new HttpBridge({ port: 0, authToken: TOKEN, sessions });
     const port = await bridge.start();
     baseUrl = `http://127.0.0.1:${port}`;
 
-    const server = createMcpServer({ queue, bridge, config });
+    const server = createMcpServer({ sessions, bridge, config });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({ name: "test-client", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   });
 
   afterEach(async () => {
-    pluginRunning = false;
-    queue.rejectAll("teardown");
+    for (const plugin of plugins) plugin.stop();
+    plugins.length = 0;
+    sessions.rejectAll("teardown");
     await client.close();
     await bridge.stop();
   });
@@ -137,7 +129,7 @@ describe("MCP tools", () => {
   it("returns a clear error when Studio is not connected", async () => {
     const result = await client.callTool({ name: "get_selection", arguments: {} });
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("plugin is not connected");
+    expect(JSON.stringify(result.content)).toContain("No edit-mode Studio session is connected");
   });
 
   it("routes tool calls to the plugin and returns Studio results", async () => {
@@ -162,11 +154,75 @@ describe("MCP tools", () => {
     expect(JSON.parse(text)).toEqual({ name: "TestPart", className: "Part", path: "game.Workspace.TestPart" });
   });
 
+  it("routes eval_server_runtime to the server peer and logs tools per peer", async () => {
+    await startFakePlugin(() => {
+      throw new Error("edit peer should not receive runtime commands");
+    });
+    const serverPlugin = await startFakePlugin(
+      (command) => {
+        expect(command.name).toBe("RunLuau");
+        return { output: ["42"], returns: [42] };
+      },
+      { context: "server" },
+    );
+    const clientPlugin = await startFakePlugin(
+      (command) => {
+        expect(command.name).toBe("GetLogs");
+        return { entries: [{ seq: 1, level: "Output", message: "client boot" }], latestSeq: 1, count: 1 };
+      },
+      { context: "client", userName: "Tester" },
+    );
+
+    const evalResult = await client.callTool({
+      name: "eval_server_runtime",
+      arguments: { code: "return 42" },
+    });
+    expect(evalResult.isError).toBeFalsy();
+    expect(serverPlugin.executed.map((c) => c.name)).toEqual(["RunLuau"]);
+
+    const logsResult = await client.callTool({
+      name: "get_output_logs",
+      arguments: { peer: "client" },
+    });
+    expect(logsResult.isError).toBeFalsy();
+    expect((logsResult.content as Array<{ text: string }>)[0].text).toContain("client boot");
+    expect(clientPlugin.executed.map((c) => c.name)).toEqual(["GetLogs"]);
+  });
+
+  it("explains how to get a runtime peer when none is connected", async () => {
+    await startFakePlugin(() => ({}));
+    const result = await client.callTool({ name: "eval_server_runtime", arguments: { code: "return 1" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("No server peer is connected");
+  });
+
+  it("lists connected peers", async () => {
+    await startFakePlugin(() => ({}));
+    await startFakePlugin(() => ({}), { context: "server" });
+    const result = await client.callTool({ name: "get_connected_peers", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text) as {
+      peers: Array<{ context: string; connected: boolean }>;
+    };
+    expect(parsed.peers.map((p) => p.context)).toEqual(["edit", "server"]);
+    expect(parsed.peers.every((p) => p.connected)).toBe(true);
+  });
+
   it("validates instance paths before dispatching", async () => {
     await startFakePlugin(() => ({}));
     const result = await client.callTool({ name: "delete_instance", arguments: { path: "Workspace.Part" } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("game");
+  });
+
+  it("requires targets for mass_set_properties", async () => {
+    await startFakePlugin(() => ({}));
+    const result = await client.callTool({
+      name: "mass_set_properties",
+      arguments: { properties: { Anchored: true } },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("paths");
   });
 
   it("blocks run_luau when disabled by config", async () => {
