@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (server + shared + plugin artifact)
+        run: npm run build
+
+      - name: Install Luau compiler
+        run: |
+          curl -sL -o /tmp/luau.zip https://github.com/luau-lang/luau/releases/latest/download/luau-ubuntu.zip
+          cd /tmp && unzip -o -q luau.zip && chmod +x luau-compile
+
+      - name: Compile-check all plugin Luau sources
+        run: |
+          status=0
+          while IFS= read -r f; do
+            if ! /tmp/luau-compile --binary "$f" > /dev/null; then
+              echo "Luau compile failed: $f"
+              status=1
+            fi
+          done < <(find studio-plugin/src -name '*.luau')
+          exit $status
+
+      - name: Test (includes scaffold Luau compile checks)
+        run: npm test
+        env:
+          LUAU_COMPILE_BIN: /tmp/luau-compile
