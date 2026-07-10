@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "roblox-studio": {
+      "command": "node",
+      "args": ["/absolute/path/to/roblox-studio-mcp/server/dist/index.js"]
+    }
+  }
+}

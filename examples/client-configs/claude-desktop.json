@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "roblox-studio": {
+      "command": "node",
+      "args": ["/absolute/path/to/roblox-studio-mcp/server/dist/index.js"],
+      "env": {
+        "ROBLOX_MCP_LOG_LEVEL": "info"
+      }
+    }
+  }
+}
