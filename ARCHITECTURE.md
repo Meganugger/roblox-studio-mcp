@@ -3,38 +3,48 @@
 ## System overview
 
 ```
-┌────────────────────┐   MCP (JSON-RPC over stdio)   ┌──────────────────────────┐
-│  AI Agent           │◄─────────────────────────────►│  MCP Server (Node.js)     │
-│  Claude / Cursor /  │                                │  ┌────────────────────┐  │
-│  Claude Code / ...  │                                │  │ Tool layer (39)    │  │
-└────────────────────┘                                │  │ zod validation     │  │
-                                                       │  └─────────┬──────────┘  │
-                                                       │            ▼             │
-                                                       │  ┌────────────────────┐  │
-                                                       │  │ CommandQueue       │  │
-                                                       │  │ (FIFO + timeouts)  │  │
-                                                       │  └─────────┬──────────┘  │
-                                                       │            ▼             │
-                                                       │  ┌────────────────────┐  │
-                                                       │  │ HTTP bridge        │  │
-                                                       │  │ 127.0.0.1:3667     │  │
-                                                       │  │ Bearer-token auth  │  │
-                                                       │  └─────────▲──────────┘  │
-                                                       └────────────┼─────────────┘
-                                          long-poll GET /plugin/poll│POST /plugin/result
-                                                       ┌────────────┴─────────────┐
-                                                       │  Studio Plugin (Luau)    │
-                                                       │  Bridge loop + backoff   │
-                                                       │  Executors (commands)    │
-                                                       │  Serialization           │
-                                                       │  OutputCapture (logs)    │
-                                                       │  UI widget (token/port)  │
-                                                       └────────────┬─────────────┘
-                                                                    ▼
-                                                       ┌──────────────────────────┐
-                                                       │  Roblox Studio DataModel │
-                                                       └──────────────────────────┘
+┌────────────────────┐  stdio ── or ── Streamable HTTP /mcp  ┌──────────────────────────┐
+│  AI Agent           │◄──────────────────────────────────────►│  MCP Server (Node.js)     │
+│  Claude / Cursor /  │        (bearer token in HTTP mode)     │  ┌────────────────────┐  │
+│  URL-only platforms │                                        │  │ Tool layer (48)    │  │
+└────────────────────┘                                        │  │ zod validation     │  │
+                                                               │  └─────────┬──────────┘  │
+                                                               │            ▼             │
+                                                               │  ┌────────────────────┐  │
+                                                               │  │ SessionRegistry    │  │
+                                                               │  │ 1 CommandQueue per │  │
+                                                               │  │ peer (FIFO+timeout)│  │
+                                                               │  └─────────┬──────────┘  │
+                                                               │            ▼             │
+                                                               │  ┌────────────────────┐  │
+                                                               │  │ HTTP bridge        │  │
+                                                               │  │ 127.0.0.1:3667     │  │
+                                                               │  │ Bearer-token auth  │  │
+                                                               │  └─────────▲──────────┘  │
+                                                               └────────────┼─────────────┘
+                                       long-poll GET /plugin/poll?session=…│POST /plugin/result?session=…
+                                              ┌─────────────────────────────┼─────────────────────────────┐
+                                              │                             │                             │
+                                   ┌──────────┴─────────┐       ┌──────────┴─────────┐       ┌──────────┴─────────┐
+                                   │ Plugin peer: edit  │       │ Plugin peer: server│       │ Plugin peer: client│
+                                   │ UI + build tools   │       │ (playtest DM,      │       │ (playtest DM,      │
+                                   │ + Run-mode sim     │       │  headless connect) │       │  headless connect) │
+                                   └──────────┬─────────┘       └──────────┬─────────┘       └──────────┬─────────┘
+                                              ▼                             ▼                             ▼
+                                      edit DataModel              play-server DataModel          play-client DataModel
 ```
+
+### Multi-peer sessions (protocol v2)
+
+When the user starts a play-solo or multiplayer test, Studio boots additional DataModels
+(one server, one per client) and runs the plugin in each. Every plugin instance generates a
+unique `sessionId` at load time, detects its context (`edit` / `server` / `client` via
+`RunService`), and connects as its own **peer**: playtest peers skip the UI and auto-connect
+with the token saved from the edit session. The `SessionRegistry` keeps an independent
+command queue per peer, and every tool that supports it takes a `peer` selector — this is
+what powers `eval_server_runtime`, `eval_client_runtime`, per-peer logs, and multiplayer
+debugging. Run-mode simulations (`start_playtest`) run inside the edit DataModel, so they
+stay on the edit peer.
 
 ### Why long polling?
 
@@ -67,13 +77,16 @@ Single source of truth for:
 
 | Module | Responsibility |
 | --- | --- |
-| `index.ts` | Entrypoint: starts the stdio MCP transport + HTTP bridge; graceful shutdown |
-| `config.ts` | Env config; token resolution (env → persisted file → generated) |
+| `index.ts` | Entrypoint + CLI (`--transport`, `--install-plugin`, `--print-token`); graceful shutdown |
+| `config.ts` | Env config; secret resolution (env → persisted file → generated) for both tokens |
 | `bridge/auth.ts` | Constant-time bearer-token verification |
-| `bridge/command-queue.ts` | FIFO queue bridging async tool calls to the polling plugin; per-command timeouts; shutdown rejection |
-| `bridge/http-bridge.ts` | `/health`, `/plugin/hello`, `/plugin/poll`, `/plugin/result`; body-size limits; connection tracking |
+| `bridge/command-queue.ts` | FIFO queue bridging async tool calls to a polling peer; per-command timeouts; shutdown rejection |
+| `bridge/sessions.ts` | SessionRegistry: peer lifecycle, selector resolution (`edit`/`server`/`client`/sessionId), pruning |
+| `bridge/http-bridge.ts` | `/health`, `/plugin/hello`, `/plugin/poll`, `/plugin/result` with per-session routing; body-size limits |
+| `transport/http-mcp.ts` | Streamable HTTP MCP endpoint (`/mcp`, stateless, bearer auth) for URL-only clients |
+| `install-plugin.ts` | OS-aware Studio plugin installer (`--install-plugin`, `MCP_PLUGINS_DIR`) |
 | `mcp/server.ts` | McpServer assembly + agent-facing usage instructions |
-| `mcp/tools/*` | 39 tools grouped by domain; zod input schemas; readable error surfaces |
+| `mcp/tools/*` | 48 tools grouped by domain; zod input schemas; readable error surfaces; `docs.ts` fetches official engine reference |
 | `scaffolds/*` | Production Luau gameplay templates + dependency-resolved install planner |
 
 **Tool call lifecycle:** MCP call → zod validation → connectivity check (fast, readable
@@ -86,11 +99,12 @@ can debug what happened.
 
 | Module | Responsibility |
 | --- | --- |
-| `Main.server.luau` | Wiring: output capture, UI, bridge, auto-connect with saved token |
-| `Bridge.luau` | Handshake, long-poll loop, exponential backoff reconnect (1→15 s), result delivery with retries, status events |
+| `Main.server.luau` | Context-aware wiring: full UI in edit mode; headless auto-connect in playtest DataModels |
+| `Bridge.luau` | Session identity (GUID) + context detection, handshake, long-poll loop with `?session=`, exponential backoff reconnect (1→15 s), 409 re-handshake, result delivery with retries, status events |
 | `Executors/init.luau` | Command dispatcher (merges per-domain handler tables; rejects unknown commands) |
-| `Executors/Instances.luau` | Tree/read/search/create/batch/set/rename/move/clone/delete/selection; protected-container guard; undo waypoints |
-| `Executors/Scripts.luau` | Script CRUD, exact-match patch edits (atomic), source search, compile analysis via `loadstring` |
+| `Executors/Instances.luau` | Tree/read/search/create/batch/set/mass-set/rename/move/clone/delete/selection; protected-container guard; undo waypoints |
+| `Executors/Scripts.luau` | Script CRUD, exact-match patch edits (atomic), project-wide find/replace with dry-run, source search, compile analysis via `loadstring` |
+| `Executors/Breakpoints.luau` | Marker-tagged log breakpoints: insert / list / clear non-pausing instrumentation |
 | `Executors/RunCode.luau` | Sandboxed `loadstring` execution: print/warn capture, timeout + `task.cancel`, serialized return values |
 | `Executors/Project.luau` | Status, project info, save request notification, bounded project snapshot export |
 | `Executors/Playtest.luau` | `RunService:Run()/Stop()` control + log retrieval |
@@ -107,12 +121,13 @@ All bridge endpoints are JSON over HTTP on `127.0.0.1`. Every `/plugin/*` reques
 
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
-| `/health` | GET | Unauthenticated liveness probe: `{ok, pluginConnected}` (no sensitive data) |
-| `/plugin/hello` | POST | Handshake: plugin/protocol versions + place metadata → server version; 409 on protocol mismatch, 401 on bad token |
-| `/plugin/poll` | GET | Long poll (≤ 15 s hold). 200 + `BridgeCommand`, or 204 when idle |
-| `/plugin/result` | POST | `BridgeResult` for a delivered command. 200, or 410 if the command already timed out |
+| `/health` | GET | Unauthenticated liveness probe: `{ok, pluginConnected, peers}` (no sensitive data) |
+| `/plugin/hello` | POST | Handshake: `sessionId` + `context` + plugin/protocol versions + place/user metadata → server version; 409 on protocol mismatch, 400 on missing session identity, 401 on bad token |
+| `/plugin/poll?session=…` | GET | Long poll (≤ 15 s hold) on that peer's queue. 200 + `BridgeCommand`, 204 when idle, 409 for unknown sessions (plugin re-handshakes) |
+| `/plugin/result?session=…` | POST | `BridgeResult` for a delivered command. 200, 410 if the command already timed out, 409 for unknown sessions |
 
-The plugin is considered **connected** while polls arrive within a 45 s window.
+A peer is considered **connected** while polls arrive within a 45 s window; sessions
+unseen for 10 minutes are pruned.
 Commands time out server-side from the moment they are enqueued (default 30 s;
 long operations like batch creation, terrain, and snapshot export use larger budgets;
 `run_luau` timeout is caller-controlled up to 180 s).
@@ -160,10 +175,14 @@ agent: save_project()                  → user notified to Ctrl+S
 Layered defenses, each independent:
 
 1. **Network boundary** — the bridge binds to `127.0.0.1` only; nothing is reachable
-   from the network. `/health` exposes no sensitive data and no mutation.
+   from the network. `/health` exposes no sensitive data and no mutation. The optional
+   Streamable HTTP MCP endpoint also binds locally by default and is designed to be
+   published through a reverse tunnel with TLS (see `docs/remote-access.md`), never by
+   opening the raw port to the Internet.
 2. **Authentication** — every `/plugin/*` request requires a bearer token (≥ 128-bit,
-   auto-generated, stored `0600`), compared in constant time. Protocol-version pinning
-   prevents skew between plugin and server.
+   auto-generated, stored `0600`), compared in constant time; the HTTP MCP endpoint
+   requires its own independent bearer token. Protocol-version pinning prevents skew
+   between plugin and server.
 3. **Server-side validation** — every tool input is zod-validated (paths, class names,
    sizes, counts, timeouts) before anything reaches Studio. Oversized bodies are rejected.
 4. **Studio-side guards** — protected containers (`game`, core services) cannot be
@@ -201,13 +220,17 @@ Scaffolds are complete Luau systems (not snippets) installed via one atomic batc
 
 ## Testing strategy
 
-- **Unit:** command queue (FIFO, park/flush, timeout, shutdown), auth (constant-time
-  matching cases), shared encoders/validators.
-- **Integration:** real HTTP bridge + simulated plugin client (handshake, auth rejection,
-  protocol mismatch, round-trip, error propagation, ordering, timeout `410`).
+- **Unit:** command queue (FIFO, park/flush, timeout, shutdown), session registry
+  (selectors, ambiguity, pruning), auth (constant-time matching cases), shared
+  encoders/validators, docs YAML condenser.
+- **Integration:** real HTTP bridge + simulated plugin peers (handshake, auth rejection,
+  protocol mismatch, round-trip, error propagation, ordering, timeout `410`, multi-peer
+  routing between edit/server/client sessions, sessionId disambiguation).
 - **Full-stack:** real MCP client over an in-memory transport → server → bridge →
-  fake plugin, asserting the complete tool list, argument validation, disabled-tool
-  behavior, and scaffold install payloads.
+  fake plugin, asserting the complete tool list, argument validation, per-peer runtime
+  routing, disabled-tool behavior, and scaffold install payloads. A second suite connects
+  a real MCP client over actual TCP to the Streamable HTTP endpoint (auth, tools,
+  end-to-end calls, concurrent stateless clients).
 - **Luau:** every plugin file and every scaffold template is compiled with the official
   `luau-compile` (test auto-skips where the binary is unavailable, CI installs it).
 - **Artifact:** the `.rbxmx` packer output is validated for structure and XML safety.

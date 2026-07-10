@@ -22,19 +22,25 @@ Outputs:
 - `server/dist/index.js` — the MCP server entrypoint
 - `studio-plugin/dist/RobloxStudioMCP.rbxmx` — the ready-to-install Studio plugin
 
-Run `npm test` to verify your build (38 tests should pass).
+Run `npm test` to verify your build (62 tests should pass).
 
 ## 2. Install the Studio plugin
 
-Copy `studio-plugin/dist/RobloxStudioMCP.rbxmx` into your local plugins folder:
+```bash
+node server/dist/index.js --install-plugin
+```
+
+This copies the built `.rbxmx` into your local plugins folder automatically. Manual
+alternative — copy `studio-plugin/dist/RobloxStudioMCP.rbxmx` yourself:
 
 | OS | Path |
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\Roblox\Plugins\` |
 | macOS | `~/Documents/Roblox/Plugins/` |
+| Other / custom | set `MCP_PLUGINS_DIR` before running `--install-plugin` |
 
-Tip: in Studio, **Plugins tab → Plugins Folder** opens the right directory. Restart
-Studio (or use *Plugins → Manage Plugins → refresh*) and you should see a
+Tip: in Studio, **Plugins tab → Plugins Folder** opens the right directory. Fully close
+and reopen Studio after installing/updating and you should see a
 **Roblox Studio MCP** toolbar section with an **MCP** button.
 
 ### Building the plugin with Rojo (optional)
@@ -86,6 +92,20 @@ Settings → MCP → Add server, or `.cursor/mcp.json`:
 }
 ```
 
+### URL-only platforms (remote MCP)
+
+Platforms that only accept an MCP **server URL** connect through the Streamable HTTP
+transport plus a reverse tunnel:
+
+```bash
+node server/dist/index.js --transport http        # serves http://127.0.0.1:3668/mcp
+cloudflared tunnel --url http://127.0.0.1:3668    # publishes it as https://…
+```
+
+Give the platform `https://<tunnel-host>/mcp` with header
+`Authorization: Bearer <~/.roblox-studio-mcp/http-token>`.
+Full guide: [remote-access.md](remote-access.md).
+
 Ready-made files live in [`examples/client-configs/`](../examples/client-configs/).
 
 ## 4. Pair the plugin with the server
@@ -115,10 +135,15 @@ It should call `ping_studio` (round-trip latency) and `get_project_info` (place 
 | --- | --- | --- |
 | `ROBLOX_MCP_PORT` | `3667` | Bridge port. Change it in both the server env and the plugin widget |
 | `ROBLOX_MCP_TOKEN` | auto | Provide your own shared secret (≥ 16 chars) |
+| `ROBLOX_MCP_TRANSPORT` | `stdio` | `http` serves Streamable HTTP MCP instead of stdio |
+| `ROBLOX_MCP_HTTP_PORT` | `3668` | HTTP MCP port (`--transport http`) |
+| `ROBLOX_MCP_HTTP_HOST` | `127.0.0.1` | HTTP MCP bind host (keep local; publish via tunnel) |
+| `ROBLOX_MCP_HTTP_TOKEN` | auto | Bearer token for the HTTP MCP endpoint (≥ 16 chars) |
 | `ROBLOX_MCP_HOME` | `~/.roblox-studio-mcp` | Token persistence directory |
-| `ROBLOX_MCP_ALLOW_RUN_LUAU` | `1` | `0` disables `run_luau` and `analyze_scripts` |
+| `ROBLOX_MCP_ALLOW_RUN_LUAU` | `1` | `0` disables `run_luau`, runtime evals and `analyze_scripts` |
 | `ROBLOX_MCP_ALLOW_INSERT_ASSET` | `1` | `0` disables `insert_asset` |
 | `ROBLOX_MCP_LOG_LEVEL` | `info` | stderr log verbosity |
+| `MCP_PLUGINS_DIR` | OS default | Studio plugins folder override for `--install-plugin` |
 
 Set env vars in the MCP client config, e.g.:
 

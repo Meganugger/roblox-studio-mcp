@@ -60,6 +60,17 @@ Another process owns the port (often a second MCP client instance).
   Services* is off. Scaffold services detect this and fall back to in-memory profiles
   with a warning, so gameplay still works during development.
 
+## No server/client peers during a playtest
+
+- Playtest peers (`eval_server_runtime`, `peer="server"/"client"`) only appear for
+  **play-solo / multiplayer tests** started from Studio's Play/Test buttons — not for
+  `start_playtest` (Run mode stays on the edit peer).
+- The playtest DataModels auto-connect using the token **saved by the edit-mode widget**;
+  connect once from the widget first, then start the playtest.
+- Studio must allow HTTP requests in the play session (same *Allow HTTP Requests* setting).
+- Check `get_connected_peers`; peers appear a few seconds after the playtest starts. If a
+  client is missing, make sure the plugin is installed locally (not only enabled per-place).
+
 ## Logs are empty
 
 - Log capture starts when the plugin loads; output from before that isn't captured.
