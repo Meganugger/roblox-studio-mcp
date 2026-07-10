@@ -1,0 +1,27 @@
+{
+  "name": "roblox-studio-mcp-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production Model Context Protocol integration for Roblox Studio: MCP server + Studio plugin that let AI agents build, test and debug Roblox games autonomously.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server"
+  ],
+  "scripts": {
+    "build": "npm run build -w shared && npm run build -w server && npm run build:plugin",
+    "build:plugin": "node scripts/build-plugin.mjs",
+    "start": "node server/dist/index.js",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}

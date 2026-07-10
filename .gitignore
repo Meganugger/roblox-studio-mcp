@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+shared/dist/
+server/dist/
+studio-plugin/dist/
+
+# Logs & OS noise
+*.log
+.DS_Store
+
+# Local env
+.env
+.env.*
+
+# Editor
+.vscode/
+.idea/
+
+# Rojo
+sourcemap.json
