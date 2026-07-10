@@ -69,6 +69,31 @@ verifying services, spawners, data flow, and error-free startup. Player-dependen
 (character touch, UI) is verified by code review plus targeted `run_luau` probes — e.g.
 simulating a touch by calling the same server API the touch handler uses.
 
+## Runtime debugging (play-solo / multiplayer)
+
+For player-in-game verification, ask the user to press **Play** (F5) or start a multiplayer
+test. Studio runs the plugin in every DataModel and each auto-connects as its own peer:
+
+```
+get_connected_peers                    → edit + server + client:PlayerName …
+eval_server_runtime {code}             → inspect live server state mid-game
+eval_client_runtime {code}             → inspect a client's PlayerGui / camera / character
+get_output_logs {peer:"server"}        → server logs (incl. boot-time prints)
+get_errors {peer:"client"}             → client errors with stack traces
+```
+
+To trace a specific code path without pausing the game:
+
+```
+set_log_breakpoint {path, line, message, expressions:["player.Name","damage"]}
+(reproduce the behavior in the playtest)
+get_output_logs {peer:"server"}        → entries prefixed [MCP:BP:<id>]
+clear_log_breakpoints                  → always clean up afterwards
+```
+
+In multiplayer tests with several clients, pass the target client's `sessionId` from
+`get_connected_peers` as `peer`.
+
 ## run_luau: the escape hatch
 
 Anything without a dedicated tool: complex geometry, physics constraints, bulk edits,

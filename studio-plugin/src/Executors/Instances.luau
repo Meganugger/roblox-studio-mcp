@@ -213,6 +213,77 @@ handlers.SetProperties = function(payload)
 	return { path = PathResolver.pathOf(instance), applied = true }
 end
 
+handlers.MassSetProperties = function(payload)
+	-- Collect targets: explicit paths, or filter search under a root.
+	local targets: { Instance } = {}
+	local maxInstances = payload.maxInstances or 1000
+
+	if payload.paths then
+		for _, path in payload.paths :: { string } do
+			table.insert(targets, PathResolver.mustResolve(path))
+			if #targets >= maxInstances then
+				break
+			end
+		end
+	else
+		local root = PathResolver.mustResolve(payload.root)
+		local needle = if payload.nameContains then string.lower(payload.nameContains) else nil
+		local className = payload.className
+		for _, descendant in root:GetDescendants() do
+			local nameMatches = needle == nil or string.find(string.lower(descendant.Name), needle, 1, true) ~= nil
+			local classMatches = true
+			if className ~= nil then
+				classMatches = false
+				pcall(function()
+					classMatches = descendant:IsA(className)
+				end)
+			end
+			if nameMatches and classMatches and not PROTECTED[descendant] then
+				table.insert(targets, descendant)
+				if #targets >= maxInstances then
+					break
+				end
+			end
+		end
+	end
+
+	if payload.dryRun then
+		local matched = {}
+		for _, instance in targets do
+			table.insert(matched, PathResolver.pathOf(instance))
+		end
+		return { dryRun = true, matched = matched, count = #matched, truncated = #targets >= maxInstances }
+	end
+
+	local updated = 0
+	local failures = {}
+	for _, instance in targets do
+		if PROTECTED[instance] then
+			table.insert(failures, { path = PathResolver.pathOf(instance), error = "protected container" })
+			continue
+		end
+		local ok, err = pcall(function()
+			Serialization.applyProperties(instance, payload.properties)
+		end)
+		if ok then
+			updated += 1
+		else
+			table.insert(failures, { path = PathResolver.pathOf(instance), error = tostring(err) })
+			if #failures >= 25 then
+				table.insert(failures, { path = "...", error = "further failures suppressed" })
+				break
+			end
+		end
+	end
+	waypoint(("Mass set properties on %d instances"):format(updated))
+	return {
+		updated = updated,
+		matched = #targets,
+		failures = failures,
+		truncated = #targets >= maxInstances,
+	}
+end
+
 handlers.RenameInstance = function(payload)
 	local instance = PathResolver.mustResolve(payload.path)
 	assertMutable(instance)

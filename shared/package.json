@@ -1,6 +1,6 @@
 {
   "name": "@roblox-studio-mcp/shared",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Shared protocol definitions, schemas and types for Roblox Studio MCP.",
   "license": "MIT",
   "type": "module",

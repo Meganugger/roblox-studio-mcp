@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { CommandName, isValidInstancePath } from "@roblox-studio-mcp/shared";
-import { CommandQueue, CommandTimeoutError, StudioCommandError } from "../bridge/command-queue.js";
+import { CommandTimeoutError, StudioCommandError } from "../bridge/command-queue.js";
 import { HttpBridge } from "../bridge/http-bridge.js";
+import { SessionRegistry, UnknownPeerError } from "../bridge/sessions.js";
 import { ServerConfig } from "../config.js";
 
 /** Shared context handed to every tool module. */
 export interface ToolContext {
-  queue: CommandQueue;
+  sessions: SessionRegistry;
   bridge: HttpBridge;
   config: ServerConfig;
 }
@@ -27,27 +28,37 @@ export function errorResult(message: string): ToolResult {
 }
 
 /**
- * Dispatch a command to Studio and format the response for the MCP client.
- * Connection problems and Studio-side errors become readable tool errors
- * instead of protocol failures, so the AI can react and retry.
+ * Dispatch a command to a Studio peer and format the response for the MCP
+ * client. Connection problems and Studio-side errors become readable tool
+ * errors instead of protocol failures, so the AI can react and retry.
+ *
+ * `peer` selects the target DataModel: "edit" (default), "server", "client",
+ * or an explicit sessionId from get_connected_peers.
  */
 export async function runCommand(
   ctx: ToolContext,
   name: CommandName,
   payload: Record<string, unknown>,
   timeoutMs?: number,
+  peer: string = "edit",
 ): Promise<ToolResult> {
-  if (!ctx.bridge.connectionState().connected) {
-    return errorResult(
-      "Roblox Studio plugin is not connected. Open Roblox Studio with the Roblox Studio MCP plugin " +
-        "installed, click the MCP toolbar button, verify the token matches, and try again. " +
-        "(The plugin connects to this server over http://127.0.0.1:" +
-        ctx.bridge.port +
-        ".)",
-    );
+  let session;
+  try {
+    session = ctx.sessions.resolve(peer);
+  } catch (err) {
+    if (err instanceof UnknownPeerError) {
+      const editHint =
+        peer === "edit"
+          ? " Open Roblox Studio with the Roblox Studio MCP plugin installed, click the MCP toolbar button, " +
+            "verify the token matches, and try again. (The plugin connects to this server over " +
+            `http://127.0.0.1:${ctx.bridge.port}.)`
+          : "";
+      return errorResult(err.message + editHint);
+    }
+    throw err;
   }
   try {
-    const result = await ctx.queue.dispatch(name, payload, timeoutMs);
+    const result = await session.queue.dispatch(name, payload, timeoutMs);
     return textResult(result ?? { ok: true });
   } catch (err) {
     if (err instanceof StudioCommandError) {
@@ -86,3 +97,14 @@ export const propertiesSchema = z
 export const scriptClassSchema = z
   .enum(["Script", "LocalScript", "ModuleScript"])
   .describe("Roblox script class.");
+
+/** Peer selector for tools that can target a specific live DataModel. */
+export const peerSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .default("edit")
+  .describe(
+    'Which connected Studio peer to target: "edit" (default), "server" (playtest server), "client" ' +
+      "(playtest client), or an explicit sessionId from get_connected_peers when several clients are connected.",
+  );

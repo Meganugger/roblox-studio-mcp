@@ -1,6 +1,6 @@
 {
   "name": "@roblox-studio-mcp/server",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "MCP server that lets AI agents control Roblox Studio through the companion Studio plugin.",
   "license": "MIT",
   "type": "module",
@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@roblox-studio-mcp/shared": "1.0.0",
+    "@roblox-studio-mcp/shared": "2.0.0",
     "zod": "^3.25.76"
   }
 }

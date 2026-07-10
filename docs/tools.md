@@ -1,6 +1,6 @@
 # Tool reference
 
-All 39 tools, grouped by domain. Parameters marked * are required.
+All 48 tools, grouped by domain. Parameters marked * are required.
 
 **Conventions**
 
@@ -11,6 +11,10 @@ All 39 tools, grouped by domain. Parameters marked * are required.
   keys prefixed `@` write attributes. Supported tags: `Vector3`, `Vector2`, `CFrame`,
   `Color3`, `BrickColor`, `UDim`, `UDim2`, `EnumItem`, `Instance`, `NumberRange`, `Rect`,
   `ColorSequence`, `NumberSequence`, `Font`.
+- *Peer* — which connected Studio DataModel a tool targets: `edit` (default), `server`
+  (playtest server), `client` (playtest client), or an explicit `sessionId` from
+  `get_connected_peers` when several clients are connected. During play-solo / multiplayer
+  tests the plugin auto-connects one peer per DataModel.
 
 ---
 
@@ -18,10 +22,15 @@ All 39 tools, grouped by domain. Parameters marked * are required.
 
 ### `get_studio_status`
 Report plugin connectivity plus live place metadata (name, placeId, run state, selection
-count, camera). Call this first.
+count, camera) and the connected peer list. Call this first.
+
+### `get_connected_peers`
+List every connected peer: `{sessionId, context, connected, placeName, userName, userId,
+lastSeenAt}`. Use a peer's `sessionId` (or the `edit`/`server`/`client` shortcuts) as the
+`peer` argument of runtime tools.
 
 ### `ping_studio`
-Round-trip latency through the full pipeline.
+`peer` — round-trip latency through the full pipeline to any connected peer.
 
 ---
 
@@ -54,6 +63,13 @@ batch — ideal for maps and UI hierarchies. Precise per-item error attribution.
 ### `set_instance_properties`
 `path`\* · `properties`\* — set properties and/or `@attributes`.
 
+### `mass_set_properties`
+`properties`\* · targets: `paths[]` **or** filter (`root` + `className`/`nameContains`) ·
+`maxInstances` (default 1000) · `dryRun`
+Set the same properties on many instances in one atomic operation (single undo waypoint).
+Filter mode requires at least one of `className`/`nameContains` (refuses to bulk-edit every
+descendant). Returns `{updated, matched, failures[], truncated}`; `dryRun` previews matches.
+
 ### `rename_instance` / `move_instance` / `clone_instance` / `delete_instance`
 Rename (`newName`), reparent (`newParentPath`, cycle-safe), deep-copy (`newParentPath`,
 `newName`), destroy. Protected containers (game, core services) refuse mutation.
@@ -85,6 +101,13 @@ Atomic: all edits or none, with actionable errors (missing/ambiguous matches).
 `query`\* · `isPattern` (Lua pattern) · `caseSensitive` · `root` · `maxResults`
 Grep across all scripts: path + line number + line text.
 
+### `find_and_replace_in_scripts`
+`find`\* · `replace`\* · `root` (default `game`) · `caseSensitive` (default true) ·
+`classFilter` · `maxScripts` (default 500) · `dryRun`
+Literal find/replace across every script under a root, one undo waypoint. Ideal for
+project-wide refactors (renaming a RemoteEvent, migrating a deprecated API). `dryRun`
+returns per-script match counts without changing anything.
+
 ### `list_scripts`
 `root` · `classFilter` — every script with path, class, line count, enabled state.
 
@@ -98,10 +121,22 @@ Run after batch edits and before playtesting.
 ## Code execution
 
 ### `run_luau`
-`code`\* · `timeoutMs` (1 000–180 000, default 30 000) · `description` (undo label)
-Execute Luau at plugin security level in the edit DataModel. Captures `print`/`warn`,
-serializes return values (tables to depth 6, Instances → paths), enforces the timeout
-(cancels the thread), single undo waypoint. Disable with `ROBLOX_MCP_ALLOW_RUN_LUAU=0`.
+`code`\* · `timeoutMs` (1 000–180 000, default 30 000) · `description` (undo label) · `peer`
+Execute Luau at plugin security level in any connected DataModel (edit by default).
+Captures `print`/`warn`, serializes return values (tables to depth 6, Instances → paths),
+enforces the timeout (cancels the thread), single undo waypoint.
+Disable with `ROBLOX_MCP_ALLOW_RUN_LUAU=0`.
+
+### `eval_server_runtime`
+`code`\* · `timeoutMs`
+Run Luau inside the **live playtest server** DataModel — inspect and mutate running game
+state mid-playtest (round data, spawned NPCs, leaderstats). Requires an active
+play-solo/multiplayer playtest. Same capture/serialization as `run_luau`.
+
+### `eval_client_runtime`
+`code`\* · `timeoutMs` · `peer` (default `client`)
+Run Luau inside a **live playtest client** DataModel — PlayerGui, camera, local character,
+UI state. Pass a `sessionId` as `peer` to pick a specific client in multiplayer tests.
 
 ---
 
@@ -132,18 +167,35 @@ Stop the simulation. Script-made changes persist in the edit session — account
 when verifying state.
 
 ### `get_playtest_state`
-`{running, isEdit, latestLogSeq}`.
+`peer` — `{running, isEdit, latestLogSeq}` for that peer.
 
 ### `get_output_logs`
-`sinceSeq` (default 0) · `level` (`All`/`Output`/`Info`/`Warning`/`Error`) · `maxEntries`
-Captured output ring buffer (5 000 entries) with monotonic `seq` cursors.
+`sinceSeq` (default 0) · `level` (`All`/`Output`/`Info`/`Warning`/`Error`) · `maxEntries` · `peer`
+Captured output ring buffer (5 000 entries) with monotonic `seq` cursors. Every peer keeps
+its own buffer including boot-time prints, so server and client logs are read independently
+during playtests.
 
 ### `get_errors`
-`sinceSeq` · `maxEntries` — error entries only, including Luau stack traces and erroring
-script paths. The primary debugging feed.
+`sinceSeq` · `maxEntries` · `peer` — error entries only, including Luau stack traces and
+erroring script paths. The primary debugging feed; check `peer=server` and `peer=client`
+separately during playtests.
 
 ### `clear_output_logs`
-Clear the plugin's buffer (not Studio's Output window).
+`peer` — clear that peer's buffer (not Studio's Output window).
+
+### `set_log_breakpoint`
+`path`\* · `line`\* (1-based) · `message` · `expressions[]` (≤ 10 single-line Luau expressions)
+Insert a marker-tagged `print` before the given line — non-pausing instrumentation that
+fires in every execution context. Output lines are prefixed `[MCP:BP:<id>]` and land in the
+executing peer's log buffer. Returns the breakpoint `id` and the inserted line. Line numbers
+shift by one per inserted breakpoint; re-read the source before adding more.
+
+### `list_log_breakpoints`
+`path` — list active breakpoints `{id, path, line, text}` (place-wide without `path`).
+
+### `clear_log_breakpoints`
+`id` · `path` — remove one breakpoint, all in a script, or every breakpoint in the place
+(no arguments). Always clean up after a debugging session.
 
 ---
 
@@ -187,3 +239,16 @@ Installs scaffolds + transitive dependencies (topologically ordered) in one atom
 Idempotent: folders reused; existing scripts skipped, or updated in place with
 `overwrite`. Follow up with `analyze_scripts` + a playtest cycle, then customize the
 generated data modules (ShopCatalog, QuestDefinitions, ProfileTemplate).
+
+---
+
+## Reference
+
+### `get_roblox_docs`
+`name`\* (e.g. `ProximityPrompt`, `CFrame`, `Material`, `task`, `string`) ·
+`category` (`auto`/`class`/`datatype`/`enum`/`global`/`library`, default `auto`) · `member`
+Fetch the **official Roblox engine API reference** (from the source of docs.roblox.com) and
+return it condensed: summaries, property types, method/event signatures, parameters and
+deprecation notes. Use it to verify API semantics before writing unfamiliar code. `member`
+narrows the response to one property/method/event. Requires outbound HTTPS to
+`raw.githubusercontent.com`; responses are cached in memory.

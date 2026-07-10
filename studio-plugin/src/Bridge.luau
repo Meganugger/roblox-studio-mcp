@@ -6,12 +6,15 @@
 -- automatic reconnection. All requests carry the bearer token.
 
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
 
 local Config = require(script.Parent.Config)
 local Logger = require(script.Parent.Logger)
 local Executors = require(script.Parent.Executors)
 
 export type BridgeStatus = "Disconnected" | "Connecting" | "Connected" | "AuthFailed" | "HttpDisabled"
+export type PeerContext = "edit" | "server" | "client"
 
 local Bridge = {}
 
@@ -22,6 +25,21 @@ local statusListeners: { (status: BridgeStatus, detail: string?) -> () } = {}
 
 local currentToken = ""
 local currentPort = Config.DEFAULT_PORT
+
+-- Unique id for this DataModel session (protocol v2 peer identity).
+local sessionId = string.lower(string.gsub(HttpService:GenerateGUID(false), "%-", ""))
+
+-- Which kind of DataModel this plugin instance runs in, computed at load time:
+-- "edit" for the edit session (also hosts Run-mode simulations), "server"/
+-- "client" for the play server / play client DataModels of a playtest.
+local peerContext: PeerContext = "edit"
+if not RunService:IsEdit() then
+	peerContext = if RunService:IsServer() then "server" else "client"
+end
+
+function Bridge.getContext(): PeerContext
+	return peerContext
+end
 
 local function setStatus(newStatus: BridgeStatus, detail: string?)
 	if status ~= newStatus then
@@ -86,12 +104,27 @@ local function tryEnableHttp(): boolean
 end
 
 local function hello(): boolean
+	local userName: string? = nil
+	local userId: number? = nil
+	if peerContext == "client" then
+		pcall(function()
+			local localPlayer = Players.LocalPlayer
+			if localPlayer then
+				userName = localPlayer.Name
+				userId = localPlayer.UserId
+			end
+		end)
+	end
 	local ok, body, statusCode = request("POST", "/plugin/hello", {
 		pluginVersion = Config.PLUGIN_VERSION,
 		protocolVersion = Config.PROTOCOL_VERSION,
+		sessionId = sessionId,
+		context = peerContext,
 		placeName = game.Name,
 		placeId = game.PlaceId,
 		gameId = game.GameId,
+		userName = userName,
+		userId = userId,
 	})
 	if not ok then
 		if body == "HttpDisabled" then
@@ -115,11 +148,16 @@ local function hello(): boolean
 		return false
 	end
 	setStatus("Connected", nil)
-	Logger.info(("Connected to MCP server v%s at %s"):format(
+	Logger.info(("Connected to MCP server v%s at %s as %s peer"):format(
 		if type(body) == "table" then tostring(body.serverVersion) else "?",
-		baseUrl()
+		baseUrl(),
+		peerContext
 	))
 	return true
+end
+
+local function sessionPath(path: string): string
+	return path .. "?session=" .. sessionId
 end
 
 local function executeCommand(command: { [string]: any })
@@ -152,12 +190,17 @@ local function executeCommand(command: { [string]: any })
 
 	-- Deliver the result; retry a few times so results are not lost to blips.
 	for attempt = 1, 3 do
-		local sendOk, _, sendStatus = request("POST", "/plugin/result", resultEnvelope)
+		local sendOk, _, sendStatus = request("POST", sessionPath("/plugin/result"), resultEnvelope)
 		if sendOk and sendStatus == 200 then
 			return
 		end
 		if sendStatus == 410 then
 			Logger.warn("Server no longer waiting for result (command timed out server-side).")
+			return
+		end
+		if sendStatus == 409 then
+			Logger.warn("Server forgot this session; result dropped (will re-handshake).")
+			setStatus("Connecting", nil)
 			return
 		end
 		task.wait(attempt)
@@ -177,7 +220,7 @@ local function pollLoop(myGeneration: number)
 			backoff = Config.BACKOFF_INITIAL
 		end
 
-		local ok, body, statusCode = request("GET", "/plugin/poll", nil)
+		local ok, body, statusCode = request("GET", sessionPath("/plugin/poll"), nil)
 		if not running or myGeneration ~= generation then
 			break
 		end
@@ -192,6 +235,9 @@ local function pollLoop(myGeneration: number)
 		elseif statusCode == 401 then
 			setStatus("AuthFailed", "Token rejected by server.")
 			task.wait(Config.BACKOFF_MAX)
+		elseif statusCode == 409 then
+			-- Server restarted and no longer knows this session; re-handshake.
+			setStatus("Connecting", nil)
 		elseif statusCode == 200 and type(body) == "table" and body.id then
 			backoff = Config.BACKOFF_INITIAL
 			executeCommand(body)
