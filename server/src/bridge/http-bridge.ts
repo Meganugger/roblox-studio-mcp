@@ -3,25 +3,25 @@ import {
   BridgeResult,
   ENDPOINTS,
   LONG_POLL_HOLD_MS,
-  PLUGIN_TIMEOUT_MS,
+  PEER_CONTEXTS,
   PluginConnectionState,
   PluginHello,
   PROTOCOL_VERSION,
   ServerHello,
 } from "@roblox-studio-mcp/shared";
 import { isAuthorized } from "./auth.js";
-import { CommandQueue } from "./command-queue.js";
+import { SessionRegistry } from "./sessions.js";
 import { createLogger } from "../logger.js";
+import { SERVER_VERSION } from "../version.js";
 
 const log = createLogger("bridge");
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
-const SERVER_VERSION = "1.0.0";
 
 export interface HttpBridgeOptions {
   port: number;
   authToken: string;
-  queue: CommandQueue;
+  sessions: SessionRegistry;
   /** Bind host; always 127.0.0.1 outside of tests. */
   host?: string;
 }
@@ -29,12 +29,14 @@ export interface HttpBridgeOptions {
 /**
  * Local HTTP bridge the Roblox Studio plugin talks to.
  * See shared/src/protocol.ts for the endpoint contract.
+ *
+ * Protocol v2: every request from the plugin identifies its DataModel session
+ * via the `session` query parameter; the bridge routes polls and results to
+ * that session's own command queue (SessionRegistry).
  */
 export class HttpBridge {
   private readonly server: Server;
   private readonly options: Required<HttpBridgeOptions>;
-  private lastSeenAt: number | null = null;
-  private hello: PluginHello | null = null;
   private boundPort: number | null = null;
 
   constructor(options: HttpBridgeOptions) {
@@ -73,16 +75,22 @@ export class HttpBridge {
     return this.boundPort;
   }
 
+  /** Legacy single-plugin view: reports the state of the edit-mode peer. */
   connectionState(): PluginConnectionState {
-    const connected = this.lastSeenAt !== null && Date.now() - this.lastSeenAt < PLUGIN_TIMEOUT_MS;
-    return { connected, lastSeenAt: this.lastSeenAt, hello: this.hello };
+    const edit = this.options.sessions.editSession();
+    if (!edit) return { connected: false, lastSeenAt: null, hello: null };
+    return { connected: true, lastSeenAt: edit.lastSeenAt, hello: edit.hello };
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
     if (req.method === "GET" && url.pathname === ENDPOINTS.health) {
-      this.json(res, 200, { ok: true, pluginConnected: this.connectionState().connected });
+      this.json(res, 200, {
+        ok: true,
+        pluginConnected: this.connectionState().connected,
+        peers: this.options.sessions.connected().length,
+      });
       return;
     }
 
@@ -100,9 +108,19 @@ export class HttpBridge {
     if (req.method === "POST" && url.pathname === ENDPOINTS.hello) {
       const body = await this.readJson<PluginHello>(req, res);
       if (body === undefined) return;
-      this.hello = body;
-      this.lastSeenAt = Date.now();
+      if (
+        typeof body.sessionId !== "string" ||
+        body.sessionId.length < 8 ||
+        body.sessionId.length > 100 ||
+        !PEER_CONTEXTS.includes(body.context)
+      ) {
+        this.json(res, 400, {
+          error: "hello must include a sessionId (>=8 chars) and a context of edit|server|client",
+        });
+        return;
+      }
       const compatible = body.protocolVersion === PROTOCOL_VERSION;
+      if (compatible) this.options.sessions.upsert(body);
       const reply: ServerHello = {
         serverVersion: SERVER_VERSION,
         protocolVersion: PROTOCOL_VERSION,
@@ -111,17 +129,22 @@ export class HttpBridge {
           ? undefined
           : `Protocol mismatch: server speaks v${PROTOCOL_VERSION}, plugin speaks v${body.protocolVersion}. Update the older side.`,
       };
-      log.info(
-        `Plugin connected: ${body.placeName} (placeId=${body.placeId}, plugin v${body.pluginVersion})`,
-      );
       this.json(res, compatible ? 200 : 409, reply);
       return;
     }
 
+    // poll/result require a registered session.
+    const sessionId = url.searchParams.get("session") ?? "";
+    const session = this.options.sessions.touch(sessionId);
+    if (!session) {
+      // 409 tells the plugin to re-run its hello handshake.
+      this.json(res, 409, { error: "unknown session; send /plugin/hello first" });
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === ENDPOINTS.poll) {
-      this.lastSeenAt = Date.now();
-      const command = await this.options.queue.takeNext(LONG_POLL_HOLD_MS);
-      this.lastSeenAt = Date.now();
+      const command = await session.queue.takeNext(LONG_POLL_HOLD_MS);
+      this.options.sessions.touch(sessionId);
       if (command) {
         this.json(res, 200, command);
       } else {
@@ -134,12 +157,11 @@ export class HttpBridge {
     if (req.method === "POST" && url.pathname === ENDPOINTS.result) {
       const body = await this.readJson<BridgeResult>(req, res);
       if (body === undefined) return;
-      this.lastSeenAt = Date.now();
       if (typeof body.id !== "string" || typeof body.ok !== "boolean") {
         this.json(res, 400, { error: "invalid result envelope" });
         return;
       }
-      const known = this.options.queue.complete(body);
+      const known = session.queue.complete(body);
       this.json(res, known ? 200 : 410, { ok: known });
       return;
     }

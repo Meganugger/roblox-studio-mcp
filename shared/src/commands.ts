@@ -15,6 +15,7 @@ export const COMMAND_NAMES = [
   "CreateInstance",
   "CreateInstancesBatch",
   "SetProperties",
+  "MassSetProperties",
   "RenameInstance",
   "MoveInstance",
   "CloneInstance",
@@ -30,6 +31,12 @@ export const COMMAND_NAMES = [
   "SearchScriptSource",
   "ListScripts",
   "AnalyzeScripts",
+  "FindAndReplaceInScripts",
+
+  // Log breakpoints (non-pausing instrumentation)
+  "SetLogBreakpoint",
+  "ListLogBreakpoints",
+  "ClearLogBreakpoints",
 
   // Code execution
   "RunLuau",
