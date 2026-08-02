@@ -11,6 +11,7 @@ import { SessionRegistry } from "../server/src/bridge/sessions.js";
 import { HttpMcpTransport } from "../server/src/transport/http-mcp.js";
 import { ServerConfig } from "../server/src/config.js";
 import { FakePlugin } from "./helpers/fake-plugin.js";
+import { makeConfig, makeNativeHost } from "./helpers/test-context.js";
 
 const PLUGIN_TOKEN = "plugin-token-1234567890abc";
 const MCP_TOKEN = "mcp-http-token-1234567890abc";
@@ -22,18 +23,12 @@ describe("Streamable HTTP MCP transport", () => {
   let mcpUrl: string;
   let plugin: FakePlugin | null = null;
 
-  const config: ServerConfig = {
-    bridgePort: 0,
+  const config: ServerConfig = makeConfig({
     authToken: PLUGIN_TOKEN,
     transport: "http",
-    httpPort: 0,
-    httpHost: "127.0.0.1",
     httpToken: MCP_TOKEN,
-    allowRunLuau: true,
-    allowInsertAsset: true,
-    maxScriptSourceBytes: 512 * 1024,
-    maxLuauCodeBytes: 256 * 1024,
-  };
+  });
+  const native = makeNativeHost();
 
   beforeEach(async () => {
     sessions = new SessionRegistry();
@@ -43,7 +38,7 @@ describe("Streamable HTTP MCP transport", () => {
       port: 0,
       host: "127.0.0.1",
       token: MCP_TOKEN,
-      ctx: { sessions, bridge, config },
+      ctx: { sessions, bridge, config, native },
     });
     const port = await transport.start();
     mcpUrl = `http://127.0.0.1:${port}/mcp`;

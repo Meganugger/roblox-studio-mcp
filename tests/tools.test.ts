@@ -10,6 +10,7 @@ import { HttpBridge } from "../server/src/bridge/http-bridge.js";
 import { SessionRegistry } from "../server/src/bridge/sessions.js";
 import { createMcpServer } from "../server/src/mcp/server.js";
 import { ServerConfig } from "../server/src/config.js";
+import { makeConfig, makeNativeHost } from "./helpers/test-context.js";
 import { BridgeCommand } from "@roblox-studio-mcp/shared";
 import { FakePlugin, FakePluginOptions } from "./helpers/fake-plugin.js";
 
@@ -64,6 +65,19 @@ const EXPECTED_TOOLS = [
   "list_scaffolds",
   "install_scaffold",
   "get_roblox_docs",
+  "get_host_capabilities",
+  "get_studio_processes",
+  "launch_studio",
+  "close_studio",
+  "focus_studio_window",
+  "send_studio_shortcut",
+  "capture_studio_screenshot",
+  "start_play_solo",
+  "stop_play_solo",
+  "list_place_templates",
+  "create_place_file",
+  "open_place_file",
+  "list_place_files",
 ];
 
 describe("MCP tools", () => {
@@ -73,18 +87,8 @@ describe("MCP tools", () => {
   let baseUrl = "";
   const plugins: FakePlugin[] = [];
 
-  const config: ServerConfig = {
-    bridgePort: 0,
-    authToken: TOKEN,
-    transport: "stdio",
-    httpPort: 0,
-    httpHost: "127.0.0.1",
-    httpToken: "",
-    allowRunLuau: true,
-    allowInsertAsset: true,
-    maxScriptSourceBytes: 512 * 1024,
-    maxLuauCodeBytes: 256 * 1024,
-  };
+  const config: ServerConfig = makeConfig({ authToken: TOKEN });
+  const native = makeNativeHost();
 
   async function startFakePlugin(
     handler: (command: BridgeCommand) => unknown,
@@ -103,7 +107,7 @@ describe("MCP tools", () => {
     const port = await bridge.start();
     baseUrl = `http://127.0.0.1:${port}`;
 
-    const server = createMcpServer({ sessions, bridge, config });
+    const server = createMcpServer({ sessions, bridge, config, native });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({ name: "test-client", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
