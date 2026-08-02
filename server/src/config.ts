@@ -44,6 +44,25 @@ export interface ServerConfig {
   placesRoot: string;
   /** Where captured screenshots are written. */
   screenshotDir: string;
+  /**
+   * Whether the Roblox Open Cloud publishing tools are enabled. Off by default:
+   * unlike every other tool, these change what live players see.
+   */
+  allowPublish: boolean;
+  /** Open Cloud API key, from the environment or the persisted key file. */
+  openCloudKey?: string;
+  /** Where the key was found (reported to the agent; the key itself never is). */
+  openCloudKeySource?: OpenCloudKeySource;
+  /** Path that is checked for a key file, reported even when it is absent. */
+  openCloudKeyPath: string;
+  /** Default universe for the publish tools. */
+  universeId?: number;
+  /** Default place for the publish tools. */
+  placeId?: number;
+  /** When non-empty, the publish tools refuse any other universe. */
+  allowedUniverseIds: number[];
+  /** Maximum accepted place-file upload size in bytes. */
+  maxPlaceUploadBytes: number;
   /** Maximum accepted script source size in bytes. */
   maxScriptSourceBytes: number;
   /** Maximum accepted run_luau code size in bytes. */
@@ -109,6 +128,82 @@ export function resolveHttpToken(): string {
   return resolveSecret("ROBLOX_MCP_HTTP_TOKEN", "http-token");
 }
 
+export type OpenCloudKeySource = "env" | "file";
+
+export interface OpenCloudKeyResolution {
+  key?: string;
+  source?: OpenCloudKeySource;
+  /** The file path that was consulted, whether or not it held a key. */
+  path: string;
+}
+
+/** Shortest plausible Open Cloud key; real ones are far longer. */
+const MIN_OPEN_CLOUD_KEY_LENGTH = 20;
+
+/**
+ * Resolve the Open Cloud API key from the environment or the persisted key file.
+ *
+ * Unlike the bridge/HTTP tokens this deliberately never generates a value: an
+ * API key is a real Roblox credential that only the user can mint. Absence is a
+ * normal state that the publish tools report with instructions.
+ */
+export function resolveOpenCloudKey(env: NodeJS.ProcessEnv = process.env): OpenCloudKeyResolution {
+  const path = join(configDir(), "open-cloud-key");
+  const fromEnv = env.ROBLOX_MCP_OPEN_CLOUD_KEY?.trim();
+  if (fromEnv) {
+    if (fromEnv.length < MIN_OPEN_CLOUD_KEY_LENGTH) {
+      throw new Error(
+        `ROBLOX_MCP_OPEN_CLOUD_KEY is only ${fromEnv.length} characters long, which cannot be a real Roblox ` +
+          "Open Cloud API key. Copy the whole key from https://create.roblox.com/dashboard/credentials.",
+      );
+    }
+    return { key: fromEnv, source: "env", path };
+  }
+  try {
+    const fromFile = readFileSync(path, "utf8").trim();
+    if (fromFile.length >= MIN_OPEN_CLOUD_KEY_LENGTH) return { key: fromFile, source: "file", path };
+    if (fromFile.length > 0) {
+      log.warn(`${path} does not contain a plausible Open Cloud API key (too short); ignoring it.`);
+    }
+  } catch {
+    // No key file: a normal, reported state.
+  }
+  return { path };
+}
+
+function parseId(raw: string | undefined, envName: string): number | undefined {
+  if (!raw || raw.trim() === "") return undefined;
+  const value = Number.parseInt(raw.trim(), 10);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`Invalid ${envName}: ${raw} (expected a positive integer id)`);
+  }
+  return value;
+}
+
+function parseIdList(raw: string | undefined, envName: string): number[] {
+  if (!raw || raw.trim() === "") return [];
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      const value = Number.parseInt(entry, 10);
+      if (!Number.isSafeInteger(value) || value < 1) {
+        throw new Error(`Invalid ${envName}: ${raw} (expected comma-separated positive integer ids)`);
+      }
+      return value;
+    });
+}
+
+function parseByteSize(raw: string | undefined, fallback: number, envName: string): number {
+  if (!raw || raw.trim() === "") return fallback;
+  const value = Number.parseInt(raw.trim(), 10);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`Invalid ${envName}: ${raw} (expected a positive byte count)`);
+  }
+  return value;
+}
+
 function parseTransport(raw: string | undefined): McpTransportKind {
   if (!raw || raw === "stdio") return "stdio";
   if (raw === "http") return "http";
@@ -125,6 +220,7 @@ export function loadConfig(overrides: Partial<Pick<ServerConfig, "transport">> =
         "place tools will reject it. Set ROBLOX_MCP_PLACES_ROOT to a directory that contains it.",
     );
   }
+  const openCloud = resolveOpenCloudKey();
   return {
     bridgePort: parsePort(process.env.ROBLOX_MCP_PORT, DEFAULT_BRIDGE_PORT, "ROBLOX_MCP_PORT"),
     authToken: resolveAuthToken(),
@@ -141,6 +237,20 @@ export function loadConfig(overrides: Partial<Pick<ServerConfig, "transport">> =
     placesDir,
     placesRoot,
     screenshotDir: process.env.ROBLOX_MCP_SCREENSHOT_DIR || join(configDir(), "screenshots"),
+    // Publishing is opt-in: it is the only capability whose blast radius reaches
+    // real players, so it must never be enabled by merely installing the server.
+    allowPublish: parseBool(process.env.ROBLOX_MCP_ALLOW_PUBLISH, false),
+    openCloudKey: openCloud.key,
+    openCloudKeySource: openCloud.source,
+    openCloudKeyPath: openCloud.path,
+    universeId: parseId(process.env.ROBLOX_MCP_UNIVERSE_ID, "ROBLOX_MCP_UNIVERSE_ID"),
+    placeId: parseId(process.env.ROBLOX_MCP_PLACE_ID, "ROBLOX_MCP_PLACE_ID"),
+    allowedUniverseIds: parseIdList(process.env.ROBLOX_MCP_ALLOWED_UNIVERSES, "ROBLOX_MCP_ALLOWED_UNIVERSES"),
+    maxPlaceUploadBytes: parseByteSize(
+      process.env.ROBLOX_MCP_MAX_PLACE_UPLOAD_BYTES,
+      100 * 1024 * 1024,
+      "ROBLOX_MCP_MAX_PLACE_UPLOAD_BYTES",
+    ),
     maxScriptSourceBytes: 512 * 1024,
     maxLuauCodeBytes: 256 * 1024,
   };
