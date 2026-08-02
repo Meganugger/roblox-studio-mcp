@@ -29,6 +29,18 @@ const env = {
   ROBLOX_MCP_SCREENSHOT_DIR: join(home, "shots"),
 };
 
+// Publishing must be off unless explicitly enabled. Clear anything inherited
+// from the developer's shell so this run really tests the default.
+for (const name of [
+  "ROBLOX_MCP_ALLOW_PUBLISH",
+  "ROBLOX_MCP_OPEN_CLOUD_KEY",
+  "ROBLOX_MCP_UNIVERSE_ID",
+  "ROBLOX_MCP_PLACE_ID",
+  "ROBLOX_MCP_ALLOWED_UNIVERSES",
+]) {
+  delete env[name];
+}
+
 const checks = [];
 const check = (name, condition, detail = "") => {
   checks.push({ name, ok: Boolean(condition), detail });
@@ -82,7 +94,7 @@ try {
   );
 
   const { tools } = await client.listTools();
-  check("exposes the full tool suite", tools.length === 61, `${tools.length} tools`);
+  check("exposes the full tool suite", tools.length === 68, `${tools.length} tools`);
   for (const expected of [
     "get_host_capabilities",
     "launch_studio",
@@ -91,6 +103,9 @@ try {
     "start_play_solo",
     "create_place_file",
     "open_place_file",
+    "get_publish_capabilities",
+    "publish_place",
+    "restart_universe_servers",
   ]) {
     check(`tool ${expected} is registered`, tools.some((tool) => tool.name === expected));
   }
@@ -129,10 +144,29 @@ try {
   const notConnected = await client.callTool({ name: "get_selection", arguments: {} });
   check("plugin tools explain that Studio is not connected", notConnected.isError === true);
 
+  // Publishing reaches real players, so verify the shipped default really is off.
+  const publishing = json(await client.callTool({ name: "get_publish_capabilities", arguments: {} }));
+  check("publishing is disabled by default", publishing.gates.publishing === false);
+  check("no Open Cloud key is configured or invented", publishing.apiKey.configured === false && publishing.apiKey.fingerprint === null);
+  check(
+    "explains how to enable publishing",
+    publishing.notes.join(" ").includes("ROBLOX_MCP_ALLOW_PUBLISH=1"),
+  );
+
+  const blockedPublish = await client.callTool({
+    name: "publish_place",
+    arguments: { path: created.path, universeId: 1, placeId: 1 },
+  });
+  check(
+    "publish_place refuses while the gate is off",
+    blockedPublish.isError === true && blockedPublish.content[0].text.includes("ROBLOX_MCP_ALLOW_PUBLISH"),
+  );
+
   await client.close();
 
   check("stdout stayed clean in HTTP mode", stdout.trim().length === 0, JSON.stringify(stdout.slice(0, 80)));
   check("startup log mentions native host control", stderr.includes("Native host control:"));
+  check("startup log reports the publishing gate", stderr.includes("Roblox publishing: disabled"));
 } finally {
   server.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 300));

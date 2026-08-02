@@ -10,7 +10,7 @@ import { createMcpServer } from "../server/src/mcp/server.js";
 import { HttpBridge } from "../server/src/bridge/http-bridge.js";
 import { SessionRegistry } from "../server/src/bridge/sessions.js";
 import { ServerConfig } from "../server/src/config.js";
-import { makeConfig, makeNativeHost } from "./helpers/test-context.js";
+import { makeCloudClient, makeConfig, makeNativeHost } from "./helpers/test-context.js";
 
 const SAMPLE_YAML = `name: ProximityPrompt
 type: class
@@ -86,7 +86,7 @@ describe("get_roblox_docs tool", () => {
     const sessions = new SessionRegistry();
     bridge = new HttpBridge({ port: 0, authToken: config.authToken, sessions });
     await bridge.start();
-    const server = createMcpServer({ sessions, bridge, config, native });
+    const server = createMcpServer({ sessions, bridge, config, native, cloud: makeCloudClient() });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({ name: "docs-test", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

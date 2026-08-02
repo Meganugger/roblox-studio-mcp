@@ -10,7 +10,7 @@ import { HttpBridge } from "../server/src/bridge/http-bridge.js";
 import { SessionRegistry } from "../server/src/bridge/sessions.js";
 import { createMcpServer } from "../server/src/mcp/server.js";
 import { ServerConfig } from "../server/src/config.js";
-import { makeConfig, makeNativeHost } from "./helpers/test-context.js";
+import { makeCloudClient, makeConfig, makeNativeHost } from "./helpers/test-context.js";
 import { BridgeCommand } from "@roblox-studio-mcp/shared";
 import { FakePlugin, FakePluginOptions } from "./helpers/fake-plugin.js";
 
@@ -78,6 +78,13 @@ const EXPECTED_TOOLS = [
   "create_place_file",
   "open_place_file",
   "list_place_files",
+  "get_publish_capabilities",
+  "publish_place",
+  "get_universe_info",
+  "get_place_info",
+  "update_place_config",
+  "restart_universe_servers",
+  "publish_universe_message",
 ];
 
 describe("MCP tools", () => {
@@ -107,7 +114,7 @@ describe("MCP tools", () => {
     const port = await bridge.start();
     baseUrl = `http://127.0.0.1:${port}`;
 
-    const server = createMcpServer({ sessions, bridge, config, native });
+    const server = createMcpServer({ sessions, bridge, config, native, cloud: makeCloudClient() });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({ name: "test-client", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
