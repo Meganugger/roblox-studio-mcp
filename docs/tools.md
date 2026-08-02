@@ -1,6 +1,6 @@
 # Tool reference
 
-All 61 tools, grouped by domain. Parameters marked * are required.
+All 68 tools, grouped by domain. Parameters marked * are required.
 
 **Conventions**
 
@@ -332,6 +332,58 @@ launched), then opens it in Studio and waits for the edit peer.
 ### `list_place_files`
 `directory` (default: places directory) · `recursive` (default false) · `maxResults` (default 100)
 Place files newest first, with size and modification time.
+
+---
+
+## Publishing to Roblox (Open Cloud)
+
+These tools talk to Roblox's servers instead of the local machine, and are the only ones whose
+effects reach real players. They are **disabled by default**: they need `ROBLOX_MCP_ALLOW_PUBLISH=1`
+and the user's own Open Cloud API key. See [publishing.md](publishing.md) for key creation, the
+required permissions and the rollout workflow.
+
+### `get_publish_capabilities`
+Call this first. Reports the publishing gate, whether an API key is configured and where it came
+from (only a `sha256:` fingerprint is shown — the key itself is never returned), the default
+`universeId` / `placeId`, the universe allowlist, the upload size limit, the exact API-key
+permission each tool needs, and a `notes` array naming the precise fix for anything missing.
+
+### `publish_place`
+`path`\* · `universeId` · `placeId` · `versionType` (`Saved` | `Published`, default `Saved`)
+Uploads a local `.rbxlx` / `.rbxl` (sandboxed to `ROBLOX_MCP_PLACES_ROOT`) as a new version of a
+place. `Saved` stores the version **without releasing it**, so live players are unaffected;
+`Published` makes it the version new servers use. The file is validated as a real place before any
+bytes are sent (`.rbxlx` goes up as `application/xml`, `.rbxl` as `application/octet-stream`).
+Typical flow: `save_project` (real Ctrl+S) → `publish_place`.
+
+### `get_universe_info`
+`universeId`
+The experience's Open Cloud configuration: display name, description, owner (user or group),
+visibility, age rating, supported devices, voice chat. Use it to confirm the API key points at the
+experience you think it does before publishing.
+
+### `get_place_info`
+`universeId` · `placeId`
+A place's display name, description, server size and timestamps — the current values before
+`update_place_config`.
+
+### `update_place_config`
+`universeId` · `placeId` · `displayName` · `description` · `serverSize`
+Changes player-visible listing details. Only the fields you pass are modified: the `updateMask`
+sent to Roblox is built from exactly those keys, so the others are left untouched.
+
+### `restart_universe_servers`
+`universeId`
+Shuts down every running server so players rejoin on the latest **published** version. This
+**disconnects everyone currently playing** and loses in-progress rounds, so only call it when the
+user has asked to roll a build out. It has no effect on `Saved` uploads, which were never released.
+
+### `publish_universe_message`
+`universeId` · `topic`\* · `message`\* (≤ 1 KiB)
+Publishes a MessagingService message to every running server, received by
+`MessagingService:SubscribeAsync(topic)` in game code. Use it to trigger live-ops behaviour you
+have already scripted (reload config, start an event) without restarting servers. The game must
+already subscribe to the topic — this cannot run arbitrary code remotely.
 
 ---
 

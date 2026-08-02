@@ -185,7 +185,10 @@ Prompt: *"Create a polished Roblox simulator game."* A strong agent behaves like
    `start_play_solo` → `eval_server_runtime` / per-peer `get_errors` → `stop_play_solo` for a
    real player session.
 7. **Art director** — `set_camera` + `capture_studio_screenshot` to actually look at the result.
-8. **Release** — `save_project` (real Ctrl+S), summary of what was built and where it lives.
+8. **Release** — `save_project` (real Ctrl+S), summary of what was built and where it lives. If the
+   user wants it on Roblox: `get_publish_capabilities` → `publish_place` (uploads a `Saved`
+   version, players unaffected) → `publish_place versionType="Published"` only on an explicit
+   go-ahead. Details: [publishing.md](publishing.md).
 
 The full transcript-style walkthrough is in
 [`examples/simulator-game.md`](../examples/simulator-game.md).

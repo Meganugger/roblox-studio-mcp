@@ -31,7 +31,7 @@ Outputs:
 - `server/dist/index.js` — the MCP server entrypoint
 - `studio-plugin/dist/RobloxStudioMCP.rbxmx` — the ready-to-install Studio plugin
 
-Run `npm test` to verify your build (150 tests should pass; the live-X11 native suite
+Run `npm test` to verify your build (222 tests should pass; the live-X11 native suite
 self-skips when no display is available). `npm run smoke` additionally boots the built server
 and exercises the tool surface over real HTTP.
 
@@ -145,6 +145,9 @@ Then verify native control: *“Check the host capabilities and take a screensho
 `capture_studio_screenshot` should return an image of the Studio window. Anything unavailable is
 reported with the exact fix — see [native-control.md](native-control.md).
 
+Publishing to Roblox is a separate, opt-in step and is disabled until you configure it:
+[publishing.md](publishing.md).
+
 ## Configuration reference
 
 | Env var | Default | Purpose |
@@ -164,6 +167,12 @@ reported with the exact fix — see [native-control.md](native-control.md).
 | `ROBLOX_MCP_PLACES_DIR` | `~/RobloxStudioMCP/places` | Where `create_place_file` writes new places |
 | `ROBLOX_MCP_PLACES_ROOT` | home dir | Sandbox root; place tools refuse any path outside it |
 | `ROBLOX_MCP_SCREENSHOT_DIR` | `~/.roblox-studio-mcp/screenshots` | Where screenshots are saved |
+| `ROBLOX_MCP_ALLOW_PUBLISH` | `0` | `1` enables the Open Cloud publish tools. Off by default: they reach live players |
+| `ROBLOX_MCP_OPEN_CLOUD_KEY` | none | Open Cloud API key, or write it to `~/.roblox-studio-mcp/open-cloud-key` (`chmod 600`). Never generated, never printed back |
+| `ROBLOX_MCP_UNIVERSE_ID` | none | Default universe (experience) id for the publish tools |
+| `ROBLOX_MCP_PLACE_ID` | none | Default place id for the publish tools |
+| `ROBLOX_MCP_ALLOWED_UNIVERSES` | any | Comma-separated universe allowlist; others are refused even if the key can reach them |
+| `ROBLOX_MCP_MAX_PLACE_UPLOAD_BYTES` | `104857600` | Upload size cap for `publish_place` |
 | `ROBLOX_MCP_LOG_LEVEL` | `info` | stderr log verbosity |
 | `MCP_PLUGINS_DIR` | OS default | Studio plugins folder override for `--install-plugin` |
 
