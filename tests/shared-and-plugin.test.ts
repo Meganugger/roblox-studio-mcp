@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isEnumShorthand, isTaggedValue, isValidInstancePath, rbx } from "@roblox-studio-mcp/shared";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 describe("shared property encoding", () => {
   it("constructs tagged values", () => {

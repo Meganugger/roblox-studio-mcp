@@ -3,7 +3,6 @@
  * system). They let the Windows/macOS/Linux backends be exercised - and their
  * exact command lines asserted - from any host, including CI on Linux.
  */
-import { join } from "node:path";
 import { CommandRunner, HostFileSystem, RunOptions, RunResult } from "../../server/src/native/types.js";
 
 export interface FakeCall {
@@ -104,9 +103,18 @@ export class FakeFileSystem implements HostFileSystem {
   readonly directories = new Set<string>();
   readonly written: string[] = [];
 
+  /**
+   * Keys are stored with "/" separators so the same fake works whether the code
+   * under test built its paths with node:path on Windows or POSIX.
+   */
+  private key(path: string): string {
+    return path.replace(/\\/g, "/");
+  }
+
   addFile(path: string, content = "", modifiedAt = 1_000): this {
-    this.files.set(path, { content: Buffer.from(content), modifiedAt });
-    let parent = path.slice(0, path.lastIndexOf("/"));
+    const key = this.key(path);
+    this.files.set(key, { content: Buffer.from(content), modifiedAt });
+    let parent = key.slice(0, key.lastIndexOf("/"));
     while (parent.length > 1) {
       this.directories.add(parent);
       parent = parent.slice(0, parent.lastIndexOf("/"));
@@ -115,16 +123,18 @@ export class FakeFileSystem implements HostFileSystem {
   }
 
   addDirectory(path: string): this {
-    this.directories.add(path);
+    this.directories.add(this.key(path));
     return this;
   }
 
   exists(path: string): boolean {
-    return this.files.has(path) || this.directories.has(path);
+    const key = this.key(path);
+    return this.files.has(key) || this.directories.has(key);
   }
 
   readDir(path: string): string[] {
-    const prefix = path.endsWith("/") ? path : `${path}/`;
+    const key = this.key(path);
+    const prefix = key.endsWith("/") ? key : `${key}/`;
     const entries = new Set<string>();
     for (const candidate of [...this.files.keys(), ...this.directories]) {
       if (!candidate.startsWith(prefix)) continue;
@@ -136,23 +146,23 @@ export class FakeFileSystem implements HostFileSystem {
   }
 
   isDirectory(path: string): boolean {
-    return this.directories.has(path);
+    return this.directories.has(this.key(path));
   }
 
   modifiedAt(path: string): number {
-    return this.files.get(path)?.modifiedAt ?? 0;
+    return this.files.get(this.key(path))?.modifiedAt ?? 0;
   }
 
   size(path: string): number {
-    return this.files.get(path)?.content.length ?? 0;
+    return this.files.get(this.key(path))?.content.length ?? 0;
   }
 
   mkdirp(path: string): void {
-    this.directories.add(path);
+    this.directories.add(this.key(path));
   }
 
   readFile(path: string): Buffer {
-    const file = this.files.get(path);
+    const file = this.files.get(this.key(path));
     if (!file) throw new Error(`ENOENT: ${path}`);
     return file.content;
   }
@@ -162,10 +172,7 @@ export class FakeFileSystem implements HostFileSystem {
   }
 
   writeFile(path: string, contents: string): void {
-    this.written.push(path);
+    this.written.push(this.key(path));
     this.addFile(path, contents, Date.now());
   }
 }
-
-/** Windows-style paths built with node:path so tests match backend behaviour. */
-export const winPath = (...segments: string[]): string => join(...segments);

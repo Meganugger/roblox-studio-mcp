@@ -10,6 +10,7 @@ import { createMcpServer } from "../server/src/mcp/server.js";
 import { HttpBridge } from "../server/src/bridge/http-bridge.js";
 import { SessionRegistry } from "../server/src/bridge/sessions.js";
 import { ServerConfig } from "../server/src/config.js";
+import { makeConfig, makeNativeHost } from "./helpers/test-context.js";
 
 const SAMPLE_YAML = `name: ProximityPrompt
 type: class
@@ -69,18 +70,8 @@ describe("get_roblox_docs tool", () => {
   let bridge: HttpBridge;
   const fetched: string[] = [];
 
-  const config: ServerConfig = {
-    bridgePort: 0,
-    authToken: "docs-test-token-1234567890",
-    transport: "stdio",
-    httpPort: 0,
-    httpHost: "127.0.0.1",
-    httpToken: "",
-    allowRunLuau: true,
-    allowInsertAsset: true,
-    maxScriptSourceBytes: 512 * 1024,
-    maxLuauCodeBytes: 256 * 1024,
-  };
+  const config: ServerConfig = makeConfig();
+  const native = makeNativeHost();
 
   beforeEach(async () => {
     fetched.length = 0;
@@ -95,7 +86,7 @@ describe("get_roblox_docs tool", () => {
     const sessions = new SessionRegistry();
     bridge = new HttpBridge({ port: 0, authToken: config.authToken, sessions });
     await bridge.start();
-    const server = createMcpServer({ sessions, bridge, config });
+    const server = createMcpServer({ sessions, bridge, config, native });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({ name: "docs-test", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

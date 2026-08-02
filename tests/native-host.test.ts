@@ -3,13 +3,15 @@
  * handling and the capability report - the parts that must behave identically
  * on every OS.
  */
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { NativeHost, MAX_INLINE_IMAGE_BYTES } from "../server/src/native/host.js";
 import { NativeUnavailableError } from "../server/src/native/types.js";
 import { FakeCommandRunner, FakeFileSystem } from "./helpers/fake-native.js";
 import { makeNativeConfig } from "./helpers/test-context.js";
 
-const SCREENSHOT_DIR = "/tmp/mcp-shots";
+const SCREENSHOT_DIR = join(tmpdir(), "mcp-shots");
 
 interface HostSetup {
   platform?: NodeJS.Platform;
@@ -163,7 +165,7 @@ describe("NativeHost screenshots", () => {
       label: "lobby/../after lighting!",
       inline: true,
     });
-    expect(shot.path.startsWith(`${SCREENSHOT_DIR}/`)).toBe(true);
+    expect(dirname(shot.path)).toBe(SCREENSHOT_DIR);
     expect(shot.path).toMatch(/lobby_.._after_lighting_-\d{4}-\d{2}-\d{2}T[\d-]+Z\.png$/);
     expect(shot.inlined).toBe(true);
     expect(Buffer.from(shot.base64 as string, "base64").length).toBe(shot.bytes);

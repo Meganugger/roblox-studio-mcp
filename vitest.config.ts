@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -9,7 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // Tests run against TypeScript sources directly; no build step needed.
-      "@roblox-studio-mcp/shared": new URL("./shared/src/index.ts", import.meta.url).pathname,
+      "@roblox-studio-mcp/shared": fileURLToPath(new URL("./shared/src/index.ts", import.meta.url)),
     },
   },
 });
