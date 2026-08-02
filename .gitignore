@@ -1,8 +1,5 @@
 # Dependencies
 node_modules/
-# Lockfile intentionally untracked: dependencies use conservative semver
-# ranges and CI installs from the registry (see .github/workflows/ci.yml).
-package-lock.json
 
 # Build outputs
 shared/dist/
