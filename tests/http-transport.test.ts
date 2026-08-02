@@ -110,6 +110,32 @@ describe("Streamable HTTP MCP transport", () => {
     await Promise.all([a.client.close(), b.client.close()]);
   });
 
+  it("accepts the endpoint with a trailing slash", async () => {
+    const res = await fetch(`${mcpUrl}/`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${MCP_TOKEN}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { result: { tools: unknown[] } };
+    expect(body.result.tools.length).toBeGreaterThan(0);
+  });
+
+  it("reports the requested path on 404 and flags legacy SSE probes", async () => {
+    const root = await fetch(mcpUrl.replace("/mcp", "/"));
+    expect(root.status).toBe(404);
+    expect(((await root.json()) as { error: string }).error).toContain("GET /");
+
+    const sse = await fetch(mcpUrl.replace("/mcp", "/sse"));
+    expect(sse.status).toBe(404);
+    const body = (await sse.json()) as { error: string; hint?: string };
+    expect(body.hint).toContain("Legacy HTTP+SSE");
+  });
+
   it("answers /healthz without auth", async () => {
     const res = await fetch(mcpUrl.replace("/mcp", "/healthz"));
     expect(res.status).toBe(200);

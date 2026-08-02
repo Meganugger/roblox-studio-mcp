@@ -78,7 +78,12 @@ tailscale funnel 3668
 
 Publishes `https://<machine>.<tailnet>.ts.net`. With plain `tailscale serve` instead of `funnel`,
 the endpoint stays private to your tailnet — the most secure option when the AI platform can join
-your tailnet.
+your tailnet. A cloud platform cannot: it is outside your tailnet, so it needs `funnel`.
+
+Mount the tunnel at the **root**, as above. Mounting it on a sub-path
+(`tailscale serve https:443 /mcp http://127.0.0.1:3668`) strips the prefix before forwarding, so the
+server sees `/` instead of `/mcp` and answers `404` — which most clients report only as a bare
+"Non-200 status code (404)".
 
 ## 3. Connect the platform
 

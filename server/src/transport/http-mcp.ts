@@ -69,16 +69,35 @@ export class HttpMcpTransport {
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    // Tolerate trailing slashes: clients and reverse proxies add them freely, and
+    // `/mcp/` failing while `/mcp` works is indistinguishable from a wrong URL.
+    const path = url.pathname.replace(/\/+$/, "") || "/";
 
-    if (req.method === "GET" && url.pathname === "/healthz") {
+    if (req.method === "GET" && path === "/healthz") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
       return;
     }
 
-    if (url.pathname !== "/mcp") {
+    if (path !== "/mcp") {
+      // Logged because a 404 here is almost always a client URL or reverse-proxy
+      // path problem, and the client usually only surfaces the status code.
+      const legacySse = path === "/sse" || path === "/messages" || path.endsWith("/sse");
+      log.warn(
+        `404 for ${req.method ?? "?"} ${url.pathname} - the MCP endpoint is /mcp` +
+          (legacySse
+            ? " (this looks like the legacy HTTP+SSE transport; this server speaks Streamable HTTP)"
+            : ""),
+      );
       res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "not found; the MCP endpoint is /mcp" }));
+      res.end(
+        JSON.stringify({
+          error: `not found: ${req.method ?? "?"} ${url.pathname}; the MCP endpoint is POST /mcp`,
+          ...(legacySse
+            ? { hint: "Legacy HTTP+SSE transport is not supported; configure Streamable HTTP at /mcp." }
+            : {}),
+        }),
+      );
       return;
     }
 
