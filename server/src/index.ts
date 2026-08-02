@@ -24,6 +24,7 @@ import { SessionRegistry } from "./bridge/sessions.js";
 import { createMcpServer } from "./mcp/server.js";
 import { HttpMcpTransport } from "./transport/http-mcp.js";
 import { installPlugin, studioPluginsDir } from "./install-plugin.js";
+import { NativeHost } from "./native/host.js";
 import { createLogger } from "./logger.js";
 import { SERVER_VERSION } from "./version.js";
 
@@ -56,6 +57,13 @@ Environment:
   ROBLOX_MCP_HTTP_TOKEN         Bearer token for the HTTP MCP endpoint.
   ROBLOX_MCP_ALLOW_RUN_LUAU     Set 0 to disable arbitrary code execution tools.
   ROBLOX_MCP_ALLOW_INSERT_ASSET Set 0 to disable insert_asset.
+  ROBLOX_MCP_ALLOW_NATIVE       Set 0 to disable all native host control
+                                (launching Studio, window focus, screenshots, shortcuts).
+  ROBLOX_MCP_ALLOW_NATIVE_INPUT Set 0 to disable keyboard-shortcut simulation only.
+  ROBLOX_MCP_STUDIO_PATH        Explicit Roblox Studio executable path.
+  ROBLOX_MCP_PLACES_DIR         Where new place files are created.
+  ROBLOX_MCP_PLACES_ROOT        Sandbox root for place tools (default: home directory).
+  ROBLOX_MCP_SCREENSHOT_DIR     Where screenshots are written.
   MCP_PLUGINS_DIR               Override the Studio plugins folder for --install-plugin.
 `;
 
@@ -147,7 +155,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const ctx = { sessions, bridge, config };
+  const native = new NativeHost({
+    config: {
+      allowNative: config.allowNative,
+      allowNativeInput: config.allowNativeInput,
+      studioPath: config.studioPath,
+      screenshotDir: config.screenshotDir,
+    },
+  });
+  const ctx = { sessions, bridge, config, native };
   let httpTransport: HttpMcpTransport | null = null;
 
   if (config.transport === "http") {
@@ -187,6 +203,11 @@ async function main(): Promise<void> {
   log.info(`Roblox Studio MCP server v${SERVER_VERSION} ready (transport: ${config.transport}).`);
   log.info(`Bridge: http://127.0.0.1:${bridge.port} | Plugin auth token: ${config.authToken}`);
   log.info("Paste the token into the Roblox Studio MCP plugin widget to connect Studio.");
+  log.info(
+    `Native host control: ${config.allowNative ? "enabled" : "disabled"} ` +
+      `(input simulation: ${config.allowNative && config.allowNativeInput ? "enabled" : "disabled"}, ` +
+      `platform: ${process.platform}). Places dir: ${config.placesDir}`,
+  );
 
   const shutdown = async (signal: string): Promise<void> => {
     log.info(`Received ${signal}, shutting down.`);

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { buildInstallPlan, resolveInstallOrder, SCAFFOLDS } from "../../scaffolds/index.js";
-import { errorResult, runCommand, textResult, ToolContext } from "../tool-helpers.js";
+import { errorResult, runCommand, textOf, textResult, ToolContext } from "../tool-helpers.js";
 
 export function registerScaffoldTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
@@ -74,7 +74,7 @@ export function registerScaffoldTools(server: McpServer, ctx: ToolContext): void
           "Scaffolds installed. Next steps: 1) analyze_scripts to verify compilation, 2) start_playtest + " +
           "get_errors to verify runtime behavior, 3) customize catalogs/definitions (ShopCatalog, " +
           "QuestDefinitions, ProfileTemplate) for this specific game.",
-        result: JSON.parse(result.content[0].text),
+        result: JSON.parse(textOf(result)),
       });
     },
   );

@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { peerSchema, runCommand, textResult, ToolContext } from "../tool-helpers.js";
+import { peerSchema, runCommand, textOf, textResult, ToolContext } from "../tool-helpers.js";
 
 export function registerConnectionTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
@@ -31,7 +31,7 @@ export function registerConnectionTools(server: McpServer, ctx: ToolContext): vo
         lastSeenAt: state.lastSeenAt,
         handshake: state.hello,
         peers,
-        studio: live.isError ? { error: live.content[0]?.text } : JSON.parse(live.content[0].text),
+        studio: live.isError ? { error: textOf(live) } : JSON.parse(textOf(live)),
       });
     },
   );

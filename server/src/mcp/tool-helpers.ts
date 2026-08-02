@@ -1,19 +1,28 @@
 import { z } from "zod";
-import { CommandName, isValidInstancePath } from "@roblox-studio-mcp/shared";
+import { CommandName, isValidInstancePath, PeerContext, PeerInfo } from "@roblox-studio-mcp/shared";
 import { CommandTimeoutError, StudioCommandError } from "../bridge/command-queue.js";
 import { HttpBridge } from "../bridge/http-bridge.js";
 import { SessionRegistry, UnknownPeerError } from "../bridge/sessions.js";
 import { ServerConfig } from "../config.js";
+import { NativeHost } from "../native/host.js";
+import { NativeOperationError, NativeUnavailableError } from "../native/types.js";
+import { PlacePathError } from "../native/places.js";
 
 /** Shared context handed to every tool module. */
 export interface ToolContext {
   sessions: SessionRegistry;
   bridge: HttpBridge;
   config: ServerConfig;
+  /** Native host control (Studio process, window, input, screenshots). */
+  native: NativeHost;
 }
 
+export type ToolContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
 export interface ToolResult {
-  content: Array<{ type: "text"; text: string }>;
+  content: ToolContentBlock[];
   isError?: boolean;
   [key: string]: unknown;
 }
@@ -25,6 +34,42 @@ export function textResult(payload: unknown): ToolResult {
 
 export function errorResult(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
+}
+
+/** Result carrying a PNG image plus its JSON metadata. */
+export function imageResult(base64: string, metadata: unknown): ToolResult {
+  return {
+    content: [
+      { type: "image", data: base64, mimeType: "image/png" },
+      { type: "text", text: JSON.stringify(metadata, null, 2) },
+    ],
+  };
+}
+
+/** First text block of a tool result (image blocks are skipped). */
+export function textOf(result: ToolResult): string {
+  for (const block of result.content) {
+    if (block.type === "text") return block.text;
+  }
+  return "";
+}
+
+/**
+ * Turn native-layer failures into readable tool errors. Unavailability always
+ * carries the exact fix (install a tool, flip an env var, grant a permission),
+ * so the agent can tell the user what to do instead of retrying blindly.
+ */
+export function nativeErrorResult(operation: string, err: unknown): ToolResult {
+  if (err instanceof NativeUnavailableError) {
+    return errorResult(`${operation} is unavailable on this host: ${err.message}`);
+  }
+  if (err instanceof NativeOperationError) {
+    return errorResult(`${operation} failed: ${err.message}`);
+  }
+  if (err instanceof PlacePathError) {
+    return errorResult(err.message);
+  }
+  return errorResult(`${operation} failed: ${String(err instanceof Error ? err.message : err)}`);
 }
 
 /**
@@ -69,6 +114,40 @@ export async function runCommand(
       return errorResult(err.message);
     }
     return errorResult(`Failed to execute ${name}: ${String(err)}`);
+  }
+}
+
+export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Session ids of every currently known peer with the given context. */
+export function sessionIdsOf(ctx: ToolContext, context: PeerContext): Set<string> {
+  return new Set(
+    ctx.sessions
+      .list()
+      .filter((peer) => peer.context === context)
+      .map((peer) => peer.sessionId),
+  );
+}
+
+/**
+ * Wait until a peer of the given context connects that was not already known.
+ * Returns null on timeout so callers can report a precise, actionable message.
+ */
+export async function waitForNewPeer(
+  ctx: ToolContext,
+  context: PeerContext,
+  knownSessionIds: Set<string>,
+  timeoutMs: number,
+  pollIntervalMs = 500,
+): Promise<PeerInfo | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const match = ctx.sessions
+      .list()
+      .find((peer) => peer.connected && peer.context === context && !knownSessionIds.has(peer.sessionId));
+    if (match) return match;
+    if (Date.now() >= deadline) return null;
+    await sleep(pollIntervalMs);
   }
 }
 
