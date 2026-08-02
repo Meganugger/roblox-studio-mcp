@@ -8,16 +8,22 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
@@ -25,12 +31,21 @@ jobs:
       - name: Build (server + shared + plugin artifact)
         run: npm run build
 
-      - name: Install Luau compiler
+      # The native layer drives real OS tooling, so give the Linux job a real X
+      # display: tests/native-live-x11.test.ts then exercises window control,
+      # keystroke delivery and PNG capture for real instead of being skipped.
+      - name: Install native tooling (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xdotool imagemagick x11-apps
+
+      - name: Install Luau compiler (Linux)
+        if: runner.os == 'Linux'
         run: |
           curl -sL -o /tmp/luau.zip https://github.com/luau-lang/luau/releases/latest/download/luau-ubuntu.zip
           cd /tmp && unzip -o -q luau.zip && chmod +x luau-compile
 
-      - name: Compile-check all plugin Luau sources
+      - name: Compile-check all plugin Luau sources (Linux)
+        if: runner.os == 'Linux'
         run: |
           status=0
           while IFS= read -r f; do
@@ -41,7 +56,17 @@ jobs:
           done < <(find studio-plugin/src -name '*.luau')
           exit $status
 
-      - name: Test (includes scaffold Luau compile checks)
-        run: npm test
+      - name: Test with a live X display (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a --server-args="-screen 0 1280x1024x24" npm test
         env:
           LUAU_COMPILE_BIN: /tmp/luau-compile
+
+      - name: Test (Windows / macOS)
+        if: runner.os != 'Linux'
+        run: npm test
+
+      # Boots the built server over the real HTTP transport and exercises the
+      # tool surface, the auth checks and real place-file creation on this OS.
+      - name: Smoke test the built server
+        run: npm run smoke
