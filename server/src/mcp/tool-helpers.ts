@@ -7,6 +7,8 @@ import { ServerConfig } from "../config.js";
 import { NativeHost } from "../native/host.js";
 import { NativeOperationError, NativeUnavailableError } from "../native/types.js";
 import { PlacePathError } from "../native/places.js";
+import { OpenCloudClient } from "../cloud/open-cloud.js";
+import { OpenCloudRequestError, OpenCloudTransportError, OpenCloudUnavailableError } from "../cloud/types.js";
 
 /** Shared context handed to every tool module. */
 export interface ToolContext {
@@ -15,6 +17,8 @@ export interface ToolContext {
   config: ServerConfig;
   /** Native host control (Studio process, window, input, screenshots). */
   native: NativeHost;
+  /** Roblox Open Cloud access (publishing, place config, live servers). */
+  cloud: OpenCloudClient;
 }
 
 export type ToolContentBlock =
@@ -64,6 +68,25 @@ export function nativeErrorResult(operation: string, err: unknown): ToolResult {
     return errorResult(`${operation} is unavailable on this host: ${err.message}`);
   }
   if (err instanceof NativeOperationError) {
+    return errorResult(`${operation} failed: ${err.message}`);
+  }
+  if (err instanceof PlacePathError) {
+    return errorResult(err.message);
+  }
+  return errorResult(`${operation} failed: ${String(err instanceof Error ? err.message : err)}`);
+}
+
+/**
+ * Turn Open Cloud failures into readable tool errors. The client has already
+ * mapped HTTP statuses to concrete fixes (wrong key, missing permission, IP
+ * allowlist, rate limit) and scrubbed the API key, so the message is passed
+ * through unchanged.
+ */
+export function cloudErrorResult(operation: string, err: unknown): ToolResult {
+  if (err instanceof OpenCloudUnavailableError || err instanceof OpenCloudRequestError) {
+    return errorResult(err.message);
+  }
+  if (err instanceof OpenCloudTransportError) {
     return errorResult(`${operation} failed: ${err.message}`);
   }
   if (err instanceof PlacePathError) {

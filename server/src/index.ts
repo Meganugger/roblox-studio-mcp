@@ -25,6 +25,7 @@ import { createMcpServer } from "./mcp/server.js";
 import { HttpMcpTransport } from "./transport/http-mcp.js";
 import { installPlugin, studioPluginsDir } from "./install-plugin.js";
 import { NativeHost } from "./native/host.js";
+import { OpenCloudClient } from "./cloud/open-cloud.js";
 import { createLogger } from "./logger.js";
 import { SERVER_VERSION } from "./version.js";
 
@@ -65,6 +66,19 @@ Environment:
   ROBLOX_MCP_PLACES_ROOT        Sandbox root for place tools (default: home directory).
   ROBLOX_MCP_SCREENSHOT_DIR     Where screenshots are written.
   MCP_PLUGINS_DIR               Override the Studio plugins folder for --install-plugin.
+
+Publishing to Roblox (Open Cloud) - disabled by default:
+  ROBLOX_MCP_ALLOW_PUBLISH      Set 1 to enable the publish tools. These reach live
+                                players, so they are off unless you opt in.
+  ROBLOX_MCP_OPEN_CLOUD_KEY     Open Cloud API key. Alternatively write it to
+                                ~/.roblox-studio-mcp/open-cloud-key (chmod 600).
+                                Never generated, never printed back.
+  ROBLOX_MCP_UNIVERSE_ID        Default universe (experience) id for publish tools.
+  ROBLOX_MCP_PLACE_ID           Default place id for publish tools.
+  ROBLOX_MCP_ALLOWED_UNIVERSES  Comma-separated universe allowlist; other universes
+                                are refused even if the API key can reach them.
+  ROBLOX_MCP_MAX_PLACE_UPLOAD_BYTES
+                                Upload size limit for publish_place (default 100 MiB).
 `;
 
 interface CliOptions {
@@ -163,7 +177,19 @@ async function main(): Promise<void> {
       screenshotDir: config.screenshotDir,
     },
   });
-  const ctx = { sessions, bridge, config, native };
+  const cloud = new OpenCloudClient({
+    config: {
+      allowPublish: config.allowPublish,
+      apiKey: config.openCloudKey,
+      apiKeySource: config.openCloudKeySource,
+      apiKeyPath: config.openCloudKeyPath,
+      defaultUniverseId: config.universeId,
+      defaultPlaceId: config.placeId,
+      allowedUniverseIds: config.allowedUniverseIds,
+      maxUploadBytes: config.maxPlaceUploadBytes,
+    },
+  });
+  const ctx = { sessions, bridge, config, native, cloud };
   let httpTransport: HttpMcpTransport | null = null;
 
   if (config.transport === "http") {
@@ -207,6 +233,10 @@ async function main(): Promise<void> {
     `Native host control: ${config.allowNative ? "enabled" : "disabled"} ` +
       `(input simulation: ${config.allowNative && config.allowNativeInput ? "enabled" : "disabled"}, ` +
       `platform: ${process.platform}). Places dir: ${config.placesDir}`,
+  );
+  log.info(
+    `Roblox publishing: ${config.allowPublish ? "enabled" : "disabled (ROBLOX_MCP_ALLOW_PUBLISH=1 to enable)"} ` +
+      `(Open Cloud API key: ${config.openCloudKey ? `loaded from ${config.openCloudKeySource}` : "not configured"}).`,
   );
 
   const shutdown = async (signal: string): Promise<void> => {
