@@ -8,6 +8,15 @@
 | Roblox Studio | current | any platform Studio supports |
 | MCP client | — | Claude Desktop, Claude Code, Cursor, or any MCP-compatible agent |
 
+Optional, for [native host control](native-control.md) (launching Studio, screenshots, real play
+sessions, native saving):
+
+| Platform | Requirement |
+| --- | --- |
+| Windows | Nothing extra. Windows PowerShell 5.1 (`powershell.exe`) is preferred; with PowerShell 7 only, install the .NET Windows Desktop runtime for input/screenshots |
+| macOS | Grant the process running the server **Accessibility** (keystrokes) and **Screen Recording** (screenshots) in System Settings → Privacy & Security |
+| Linux | `xdotool` + ImageMagick and an X display. Roblox ships no Linux Studio build, so this is for development/testing (or a Wine install via `ROBLOX_MCP_STUDIO_PATH`) |
+
 ## 1. Build the project
 
 ```bash
@@ -22,7 +31,9 @@ Outputs:
 - `server/dist/index.js` — the MCP server entrypoint
 - `studio-plugin/dist/RobloxStudioMCP.rbxmx` — the ready-to-install Studio plugin
 
-Run `npm test` to verify your build (62 tests should pass).
+Run `npm test` to verify your build (150 tests should pass; the live-X11 native suite
+self-skips when no display is available). `npm run smoke` additionally boots the built server
+and exercises the tool surface over real HTTP.
 
 ## 2. Install the Studio plugin
 
@@ -129,6 +140,11 @@ Ready-made files live in [`examples/client-configs/`](../examples/client-configs
 Ask your agent: *“Ping Roblox Studio and give me the project info.”*
 It should call `ping_studio` (round-trip latency) and `get_project_info` (place stats).
 
+Then verify native control: *“Check the host capabilities and take a screenshot of Studio.”*
+`get_host_capabilities` should report your platform with a Studio path, and
+`capture_studio_screenshot` should return an image of the Studio window. Anything unavailable is
+reported with the exact fix — see [native-control.md](native-control.md).
+
 ## Configuration reference
 
 | Env var | Default | Purpose |
@@ -142,6 +158,12 @@ It should call `ping_studio` (round-trip latency) and `get_project_info` (place 
 | `ROBLOX_MCP_HOME` | `~/.roblox-studio-mcp` | Token persistence directory |
 | `ROBLOX_MCP_ALLOW_RUN_LUAU` | `1` | `0` disables `run_luau`, runtime evals and `analyze_scripts` |
 | `ROBLOX_MCP_ALLOW_INSERT_ASSET` | `1` | `0` disables `insert_asset` |
+| `ROBLOX_MCP_ALLOW_NATIVE` | `1` | `0` disables all native host control (Studio launching, window focus, shortcuts, screenshots) |
+| `ROBLOX_MCP_ALLOW_NATIVE_INPUT` | `1` | `0` disables keyboard-shortcut simulation only (launching and screenshots still work) |
+| `ROBLOX_MCP_STUDIO_PATH` | auto | Explicit Studio executable/app path when auto-detection fails |
+| `ROBLOX_MCP_PLACES_DIR` | `~/RobloxStudioMCP/places` | Where `create_place_file` writes new places |
+| `ROBLOX_MCP_PLACES_ROOT` | home dir | Sandbox root; place tools refuse any path outside it |
+| `ROBLOX_MCP_SCREENSHOT_DIR` | `~/.roblox-studio-mcp/screenshots` | Where screenshots are saved |
 | `ROBLOX_MCP_LOG_LEVEL` | `info` | stderr log verbosity |
 | `MCP_PLUGINS_DIR` | OS default | Studio plugins folder override for `--install-plugin` |
 

@@ -3,6 +3,20 @@
 This guide shows how an AI agent (or you, driving one) gets real work done with the
 tool suite. All examples are natural-language prompts; the agent maps them to tools.
 
+## Zero-setup start (native host control)
+
+If Studio is not open at all, don't ask the user to do it - do it yourself:
+
+```
+get_host_capabilities                            → platform, gates, Studio path, missing tooling
+create_place_file  name="PetSim" template=baseplate
+launch_studio      placeFilePath="PetSim.rbxlx"  → waits until the plugin's edit peer connects
+```
+
+`list_place_files` finds existing projects and `open_place_file` opens one. When a capability is
+unavailable the response says exactly why (a disabled gate, a missing tool, an OS permission) -
+report that instead of retrying. Details: [native-control.md](native-control.md).
+
 ## Orientation: understand the project first
 
 > "What's in this place? Give me an overview."
@@ -61,7 +75,7 @@ patch_script_source        → fix
 stop_playtest → start_playtest → get_errors   → repeat until clean
 get_output_logs            → verify expected prints (e.g. "[Bootstrap] Started 5 services")
 stop_playtest
-save_project               → user is prompted in Studio to Ctrl+S
+save_project               → sends the real Ctrl+S to Studio (falls back to prompting the user)
 ```
 
 Playtest runs in Studio **Run mode** (server simulation, no player character): perfect for
@@ -71,8 +85,10 @@ simulating a touch by calling the same server API the touch handler uses.
 
 ## Runtime debugging (play-solo / multiplayer)
 
-For player-in-game verification, ask the user to press **Play** (F5) or start a multiplayer
-test. Studio runs the plugin in every DataModel and each auto-connects as its own peer:
+For player-in-game verification, start a real play session yourself with `start_play_solo`
+(native F5 — it waits until the playtest peers connect), or ask the user to press **Play** (F5)
+or start a multiplayer test. Studio runs the plugin in every DataModel and each auto-connects as
+its own peer:
 
 ```
 get_connected_peers                    → edit + server + client:PlayerName …
@@ -118,6 +134,19 @@ Returns captured prints plus serialized return values; the whole operation is on
 waypoint. Timeouts are enforced (configurable up to 180 s), and runtime errors come back
 with full stack traces.
 
+## Look at your work (screenshots)
+
+Text tools tell you the tree is correct; they cannot tell you the map looks right. Frame the
+subject, then capture:
+
+```
+set_camera {position:[120,60,120], lookAt:[0,10,0]}
+capture_studio_screenshot {label:"lobby-after-lighting"}   → returns the window as an image
+```
+
+Use `fullScreen: true` when you suspect a modal dialog outside the Studio window, and
+`send_studio_shortcut escape` to dismiss one.
+
 ## Game system scaffolds
 
 `list_scaffolds` shows the catalog. Highlights:
@@ -144,14 +173,19 @@ Installs are idempotent: re-running skips existing files (default) or updates th
 
 Prompt: *"Create a polished Roblox simulator game."* A strong agent behaves like a team:
 
+0. **Environment** — `get_host_capabilities`; if Studio is closed, `create_place_file` +
+   `launch_studio` (native control) so the session starts without any human step.
 1. **Producer** — `get_project_info`, plan the feature list.
 2. **Level designer** — terrain, spawn area, collectible zones, lighting mood, camera checks.
 3. **Systems engineer** — `install_scaffold` for data/currency/shop/quests/progression/ui-kit.
 4. **Gameplay programmer** — game-specific scripts (collectible spawner, rebirth logic)
    wired into the scaffold services.
 5. **UI developer** — extend the UIKit HUD with shop/quest panels via `create_script`.
-6. **Tester/debugger** — the analyze → playtest → errors → patch loop until clean.
-7. **Release** — `save_project`, summary of what was built and where it lives.
+6. **Tester/debugger** — the analyze → playtest → errors → patch loop until clean, then
+   `start_play_solo` → `eval_server_runtime` / per-peer `get_errors` → `stop_play_solo` for a
+   real player session.
+7. **Art director** — `set_camera` + `capture_studio_screenshot` to actually look at the result.
+8. **Release** — `save_project` (real Ctrl+S), summary of what was built and where it lives.
 
 The full transcript-style walkthrough is in
 [`examples/simulator-game.md`](../examples/simulator-game.md).

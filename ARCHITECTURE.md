@@ -6,7 +6,7 @@
 ┌────────────────────┐  stdio ── or ── Streamable HTTP /mcp  ┌──────────────────────────┐
 │  AI Agent           │◄──────────────────────────────────────►│  MCP Server (Node.js)     │
 │  Claude / Cursor /  │        (bearer token in HTTP mode)     │  ┌────────────────────┐  │
-│  URL-only platforms │                                        │  │ Tool layer (48)    │  │
+│  URL-only platforms │                                        │  │ Tool layer (61)    │  │
 └────────────────────┘                                        │  │ zod validation     │  │
                                                                │  └─────────┬──────────┘  │
                                                                │            ▼             │
@@ -32,6 +32,15 @@
                                    └──────────┬─────────┘       └──────────┬─────────┘       └──────────┬─────────┘
                                               ▼                             ▼                             ▼
                                       edit DataModel              play-server DataModel          play-client DataModel
+
+           ┌──────────────────────────────────────────────────────────────────────────────────┐
+           │ Native host layer (same MCP server process, no plugin involved)                   │
+           │   Windows: PowerShell + user32.dll + SendKeys + GDI+                              │
+           │   macOS:   open + AppleScript/System Events + screencapture + sips                │
+           │   Linux:   xdotool + ImageMagick (dev/test host; Studio has no Linux build)        │
+           │   → launch/close Studio · focus window · allowlisted shortcuts (F5/Shift+F5/⌘S…)  │
+           │     · window & screen capture (PNG → MCP image) · .rbxlx place file generation     │
+           └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Multi-peer sessions (protocol v2)
@@ -86,8 +95,13 @@ Single source of truth for:
 | `transport/http-mcp.ts` | Streamable HTTP MCP endpoint (`/mcp`, stateless, bearer auth) for URL-only clients |
 | `install-plugin.ts` | OS-aware Studio plugin installer (`--install-plugin`, `MCP_PLUGINS_DIR`) |
 | `mcp/server.ts` | McpServer assembly + agent-facing usage instructions |
-| `mcp/tools/*` | 48 tools grouped by domain; zod input schemas; readable error surfaces; `docs.ts` fetches official engine reference |
+| `mcp/tools/*` | 61 tools grouped by domain; zod input schemas; readable error surfaces; `docs.ts` fetches official engine reference; `native.ts`/`places.ts` expose the native host layer |
 | `scaffolds/*` | Production Luau gameplay templates + dependency-resolved install planner |
+| `native/host.ts` | `NativeHost` facade: security gates, shortcut allowlist, screenshot storage/inlining, capability report |
+| `native/backends/*` | One `NativeBackend` per OS (`windows.ts`, `macos.ts`, `linux.ts`) |
+| `native/runner.ts` | `execFile`-based process runner (never a shell) + the small file-system port both are injectable for tests |
+| `native/places.ts` | `.rbxlx` place generation from templates, place inspection, path sandboxing |
+| `native/shortcuts.ts` | The closed allowlist of Studio shortcuts, translated per platform |
 
 **Tool call lifecycle:** MCP call → zod validation → connectivity check (fast, readable
 failure if Studio is offline) → `queue.dispatch(name, payload, timeout)` → command delivered
@@ -113,6 +127,40 @@ can debug what happened.
 | `PathResolver.luau` | Path ⇆ instance translation with `Name[n]` disambiguation and helpful not-found errors |
 | `OutputCapture.luau` | `LogService.MessageOut` + `ScriptContext.Error` ring buffer (5000 entries, monotonic `seq`) |
 | `UI.luau` | Toolbar button + dock widget: status, token/port inputs (persisted via plugin settings), connect toggle, save-request notifications |
+
+### `server/src/native/` — native host layer
+
+The plugin bridge can do everything *inside* an open place, but it cannot open Studio, press
+Play, save the file, or show the agent what the viewport looks like: Roblox intentionally gives
+plugins no access to the OS. The native layer covers exactly that gap, from the server process.
+
+```
+NativeHost (gates, allowlist, screenshot storage, capability report)
+   └── NativeBackend  ── WindowsBackend | MacBackend | LinuxBackend
+          ├── CommandRunner   (execFile, argv arrays, no shell)
+          └── HostFileSystem  (exists/readDir/stat/read/write/mkdirp)
+```
+
+Design decisions:
+
+- **Ports, not globals.** Backends receive `CommandRunner`, `HostFileSystem` and an `env` map,
+  so tests assert the exact program + argv each platform would run — on any OS. This is why the
+  Windows and macOS backends are fully covered by tests executed on Linux.
+- **Fixed scripts, data in the environment.** The Windows backend runs one PowerShell toolkit
+  passed as `-EncodedCommand` (base64/UTF-16LE) with a `MCP_MODE` switch; the destination path,
+  keystroke and flags arrive as environment variables. No agent-supplied string is ever
+  interpolated into a script or command line.
+- **Keystrokes are named actions.** `native/shortcuts.ts` defines a closed set with a
+  platform-independent `primary` modifier (Ctrl on Windows/Linux, Command on macOS). There is no
+  API for arbitrary keys or text.
+- **Graceful degradation.** Capabilities are probed rather than assumed: missing PowerShell
+  assemblies, missing `xdotool`, headless hosts, Wayland-without-XWayland and unsupported
+  platforms each yield an unavailable capability with a fix hint instead of a crash — and
+  `get_host_capabilities` never throws.
+- **Places are generated, not templated from binaries.** `.rbxlx` is Roblox's XML place format,
+  so `native/places.ts` emits it directly (service `<Item>`s, `CoordinateFrame`, `size`,
+  `Color3uint8`, `Material` tokens). Studio creates any omitted service on load, which keeps
+  templates small and diff-friendly.
 
 ## Wire protocol
 
@@ -160,15 +208,27 @@ sibling names use `Name[n]` (1-based). Responses always include canonical paths.
 ## Data flow example — autonomous debug loop
 
 ```
+agent: get_host_capabilities()                                  ── native layer: what can this host do?
+agent: create_place_file(name="Coins")                          ── writes a real .rbxlx
+agent: launch_studio(placeFilePath=…)  → waits for the edit peer to connect
 agent: create_script(ServerScriptService, "CoinSpawner", src)   ── plugin writes script
 agent: analyze_scripts()                                        ── loadstring compile check
-agent: start_playtest()                → returns logSeq baseline
+agent: start_playtest()                → returns logSeq baseline (Run mode, edit peer)
 agent: get_errors(sinceSeq=logSeq)     → [{message, stack, script}]
 agent: get_script_source(...)          → reads failing code
 agent: patch_script_source(...)        → atomic find/replace fix
 agent: stop_playtest() → start_playtest() → get_errors()        ── clean ✓
-agent: save_project()                  → user notified to Ctrl+S
+agent: start_play_solo()               → native F5; server + client peers connect
+agent: eval_server_runtime(code)       → live state assertions in the real game
+agent: get_errors(peer="client")       → client-side failures
+agent: stop_play_solo()                → native Shift+F5
+agent: set_camera(...) + capture_studio_screenshot()            ── visual verification
+agent: save_project()                  → native Ctrl+S, saved into the place file
 ```
+
+Steps 1-3 and the `start_play_solo` / screenshot / save steps go through the native host layer;
+everything else goes through the plugin bridge. Without native control the same loop works, but
+the user opens Studio and presses F5 themselves.
 
 ## Security model
 
@@ -195,12 +255,24 @@ Layered defenses, each independent:
 6. **Generated-code security** — scaffold code follows Roblox best practices:
    server-authoritative currency/purchases, schema-validated remotes, per-player
    rate limiting (token buckets), and no trust of client input anywhere.
+7. **Native host boundary** — the layer that touches the OS is the most powerful, so it is
+   fenced separately: two independent kill switches (`ROBLOX_MCP_ALLOW_NATIVE`,
+   `ROBLOX_MCP_ALLOW_NATIVE_INPUT`) that refuse before anything executes; a closed shortcut
+   allowlist instead of arbitrary key/text injection; window-title verification so keystrokes
+   can only land in Roblox Studio; `execFile`-only process spawning (no shell) with fixed
+   scripts and data passed through the environment; place paths resolved and confined to
+   `ROBLOX_MCP_PLACES_ROOT` with an extension whitelist; no overwrite without an explicit flag;
+   and screenshots written only under `ROBLOX_MCP_SCREENSHOT_DIR`. Details in
+   `docs/native-control.md`.
 
 **Trust model:** the MCP client is trusted (it is the operator's own AI agent); Studio
 content is semi-trusted (catalog assets may be malicious → scripts stripped); the network
 is untrusted (hence localhost + token). `run_luau` is intentionally powerful — it is the
 escape hatch that makes full autonomy possible — and is governed by the kill-switch env
 flag plus Studio's own plugin sandbox (plugin security level, no filesystem/OS access).
+The native layer deliberately steps outside that sandbox — it is the only part of the system
+that can affect anything other than the open place — which is why it is the only part with two
+kill switches, an action allowlist and a path sandbox.
 
 ## Scaffold library design
 
@@ -231,6 +303,22 @@ Scaffolds are complete Luau systems (not snippets) installed via one atomic batc
   routing, disabled-tool behavior, and scaffold install payloads. A second suite connects
   a real MCP client over actual TCP to the Streamable HTTP endpoint (auth, tools,
   end-to-end calls, concurrent stateless clients).
+- **Native (per-OS, host-independent):** every backend is driven through injected
+  `CommandRunner`/`HostFileSystem` doubles, asserting the exact program + argv for Windows,
+  macOS and Linux (Studio discovery incl. registry fallback, launch task arguments, SendKeys /
+  AppleScript / xdotool key translation for every allowlisted shortcut, capture + downscale
+  invocations, window-title refusal, permission and missing-window error mapping), plus the
+  `NativeHost` gates, screenshot inlining limits and capability report.
+- **Native (live):** `tests/native-live-x11.test.ts` runs the *real* runner against a real X
+  display and a real window titled like Studio — discovery, activation (including the
+  no-window-manager fallback), keystroke delivery, and PNG capture/downscale verified by PNG
+  signature. It self-skips without a display; CI runs it under Xvfb.
+- **Places:** generated `.rbxlx` is parsed with a real XML parser and asserted structurally
+  (services, instance properties, unique referents), plus path-sandbox escapes, extension
+  rules, overwrite protection, inspection of xml/binary/corrupt files and listing/pagination.
 - **Luau:** every plugin file and every scaffold template is compiled with the official
   `luau-compile` (test auto-skips where the binary is unavailable, CI installs it).
 - **Artifact:** the `.rbxmx` packer output is validated for structure and XML safety.
+- **Smoke:** `npm run smoke` boots the *built* server over the real Streamable HTTP transport
+  and checks auth rejection, the full tool list, host-capability reporting, real place-file
+  creation, sandbox refusal and stdout cleanliness. CI runs it on Ubuntu, Windows and macOS.

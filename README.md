@@ -4,6 +4,9 @@
 
 With this project connected, an AI assistant (Claude, Cursor, Claude Code, or any MCP client) can operate like a full Roblox development team — programmer, level designer, UI developer, gameplay engineer, tester, and debugger — inside a live Studio session:
 
+- 🖥️ **Runs Studio for you** — `get_host_capabilities` reports what the machine allows, then `create_place_file` + `launch_studio` create a real `.rbxlx` project and open it, waiting until the plugin connects. No manual setup step before the agent can work
+- 📸 **Sees the viewport** — `capture_studio_screenshot` returns the Studio window as an image, so the agent can visually verify geometry, lighting and UI instead of guessing
+- 🎮 **Drives real play sessions** — `start_play_solo` presses F5 and waits for the playtest server/client peers, making the build → test → debug → fix loop fully autonomous; `save_project` sends the real Ctrl+S
 - 🌳 **Explorer control** — create, inspect, clone, move, rename, and delete instances; batch-build hundreds of objects with one undo waypoint; bulk `mass_set_properties` across a whole map
 - 📜 **Script management** — create/read/edit/patch/search/refactor `Script`, `LocalScript`, and `ModuleScript`; project-wide `find_and_replace_in_scripts` with dry-run; compile-check the whole place
 - ⚙️ **Code execution** — run arbitrary Luau in Studio (plugin security level) with captured output and serialized return values
@@ -22,15 +25,17 @@ AI Agent (Claude / Cursor / URL-only platforms / any MCP client)
         │  MCP over stdio  — or —  Streamable HTTP at /mcp (bearer token)
         ▼
 MCP Server (Node.js + TypeScript)
-        │  local HTTP bridge on 127.0.0.1 (bearer-token auth)
-        ▼  long-polling (plugins can only make outbound requests)
-Roblox Studio Plugin (Luau) — one peer per DataModel:
+        ├──────────────── native host layer ────────────────┐
+        │  local HTTP bridge on 127.0.0.1                   │  launch/close Studio, focus window,
+        │  (bearer-token auth)                              │  allowlisted shortcuts, screenshots,
+        ▼  long-polling (plugins only make outbound calls)  │  .rbxlx place files
+Roblox Studio Plugin (Luau) — one peer per DataModel:       │  (Windows / macOS / Linux backends)
    ├─ edit session            (building + Run-mode simulation)
    ├─ playtest server         (eval_server_runtime, server logs)
    └─ playtest client(s)      (eval_client_runtime, client logs)
-        │  command executors + ChangeHistory waypoints
-        ▼
-Roblox Studio (your open place)
+        │  command executors + ChangeHistory waypoints      │
+        ▼                                                   ▼
+Roblox Studio (your open place) ◄───── OS window, process, keyboard, screen
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design, protocol, data flow, and security model.
@@ -106,12 +111,14 @@ Try the acceptance prompt:
 
 > **"Create a polished Roblox simulator game."**
 
-The agent will lay out the map with `generate_terrain` + `create_instances_batch`, install data
+If Studio is not even open, the agent starts by itself: `get_host_capabilities` →
+`create_place_file` → `launch_studio` (see [docs/native-control.md](docs/native-control.md)).
+Then it will lay out the map with `generate_terrain` + `create_instances_batch`, install data
 profiles/currency/shop/quests/UI with `install_scaffold`, write game-specific scripts, then loop
 `analyze_scripts → start_playtest → get_errors → fix → retest` until everything runs clean.
 A full walkthrough lives in [`examples/simulator-game.md`](examples/simulator-game.md).
 
-## Tool suite (48 tools)
+## Tool suite (61 tools)
 
 | Category | Tools |
 | --- | --- |
@@ -124,6 +131,8 @@ A full walkthrough lives in [`examples/simulator-game.md`](examples/simulator-ga
 | World | `generate_terrain`, `clear_terrain`, `set_lighting`, `insert_asset`, `set_camera` |
 | Game systems | `list_scaffolds`, `install_scaffold` |
 | Reference | `get_roblox_docs` |
+| Native host | `get_host_capabilities`, `get_studio_processes`, `launch_studio`, `close_studio`, `focus_studio_window`, `send_studio_shortcut`, `capture_studio_screenshot`, `start_play_solo`, `stop_play_solo` |
+| Place files | `list_place_templates`, `create_place_file`, `open_place_file`, `list_place_files` |
 
 Full reference with parameters and examples: [docs/tools.md](docs/tools.md).
 
@@ -143,6 +152,28 @@ set_log_breakpoint   path=… line=… → instrument code without pausing, repr
 
 Ask things like: *"Start reading the server logs, reproduce the hit, and tell me why the damage
 function never fires"* — the agent sets a log breakpoint, reads per-peer logs, and fixes the code.
+
+## Native host control (autonomous sessions)
+
+The server can also operate Studio itself, so a session needs no human setup:
+
+```
+get_host_capabilities                              → what this OS allows, and how to fix gaps
+create_place_file  name="PetSim" template=baseplate → a real .rbxlx on disk
+launch_studio      placeFilePath="PetSim.rbxlx"     → Studio boots; plugin peer connects
+…build with the Explorer / script / scaffold tools…
+start_play_solo                                    → presses F5, waits for server+client peers
+get_errors peer="server" · eval_server_runtime      → debug the live game
+stop_play_solo · set_camera · capture_studio_screenshot → look at the result
+save_project                                       → real Ctrl+S into the file
+```
+
+Security: two independent gates (`ROBLOX_MCP_ALLOW_NATIVE`, `ROBLOX_MCP_ALLOW_NATIVE_INPUT`), a
+closed shortcut allowlist (no arbitrary key/text injection), window-title verification before
+every keystroke, and place paths sandboxed to `ROBLOX_MCP_PLACES_ROOT`. Prerequisites per OS
+(macOS Accessibility/Screen-Recording permissions, Linux `xdotool` + ImageMagick), the exact
+commands each backend runs, and a manual acceptance checklist are in
+[docs/native-control.md](docs/native-control.md).
 
 ## Remote URL access (URL-only AI platforms)
 
@@ -179,18 +210,24 @@ Environment variables read by the server:
 | `ROBLOX_MCP_HOME` | `~/.roblox-studio-mcp` | Where generated tokens are persisted |
 | `ROBLOX_MCP_ALLOW_RUN_LUAU` | `1` | Set `0` to disable arbitrary code execution |
 | `ROBLOX_MCP_ALLOW_INSERT_ASSET` | `1` | Set `0` to disable catalog asset insertion |
+| `ROBLOX_MCP_ALLOW_NATIVE` | `1` | Set `0` to disable all native host control (launch/close Studio, window focus, shortcuts, screenshots) |
+| `ROBLOX_MCP_ALLOW_NATIVE_INPUT` | `1` | Set `0` to disable keyboard-shortcut simulation only |
+| `ROBLOX_MCP_STUDIO_PATH` | auto-detected | Explicit Roblox Studio executable path |
+| `ROBLOX_MCP_PLACES_DIR` | `~/RobloxStudioMCP/places` | Where `create_place_file` writes new places |
+| `ROBLOX_MCP_PLACES_ROOT` | home directory | Sandbox root: place tools refuse paths outside it |
+| `ROBLOX_MCP_SCREENSHOT_DIR` | `~/.roblox-studio-mcp/screenshots` | Where screenshots are written |
 | `ROBLOX_MCP_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `MCP_PLUGINS_DIR` | OS default | Override Studio plugins folder for `--install-plugin` |
 
 ## Repository layout
 
 ```
-server/         MCP server: tools, HTTP bridge, auth, scaffold library (TypeScript)
+server/         MCP server: tools, HTTP bridge, auth, scaffold library, native host layer (TypeScript)
 studio-plugin/  Roblox Studio plugin: bridge loop, executors, UI (Luau, Rojo-compatible)
 shared/         Wire protocol, command names, property encoding (TypeScript)
 scripts/        Plugin packer (source tree → .rbxmx)
 tests/          Vitest suite incl. full-stack MCP + bridge integration tests
-docs/           Installation, usage, tool reference, troubleshooting
+docs/           Installation, usage, tool reference, native control, troubleshooting
 examples/       Client configs, prompt playbooks, simulator-game walkthrough
 ```
 
@@ -198,9 +235,15 @@ examples/       Client configs, prompt playbooks, simulator-game walkthrough
 
 ```bash
 npm run typecheck   # strict TS across workspaces
-npm test            # 62 tests: unit + multi-peer bridge + HTTP transport + MCP client integration
+npm test            # 150 tests: unit, native backends (per-OS argv), multi-peer bridge,
+                    # HTTP transport, full-stack MCP client, live X11 native verification
 npm run build       # server + shared + plugin artifact
+npm run smoke       # boot the built server over real HTTP and exercise the tool surface
 ```
+
+CI runs the whole suite on **Ubuntu, Windows and macOS**; the Linux job runs under Xvfb so the
+native window/input/screenshot code is exercised against a real X display instead of being
+skipped.
 
 The plugin sources are Rojo-compatible (`studio-plugin/default.project.json`), so
 `rojo build studio-plugin -o RobloxStudioMCP.rbxmx` produces an equivalent artifact if you
@@ -224,8 +267,12 @@ peer per playtest DataModel) was pioneered by
 [Chrrxs/robloxstudio-mcp](https://github.com/Chrrxs/robloxstudio-mcp). This implementation is
 written from scratch and combines those ideas with token authentication, atomic batch building,
 a script patch/refactor toolchain, an autonomous test/debug loop, log breakpoints, official-docs
-lookup, a Streamable HTTP transport for URL-only platforms, and a production gameplay scaffold
-library.
+lookup, a Streamable HTTP transport for URL-only platforms, a production gameplay scaffold
+library, and a native host layer (Studio launching, window control, screenshots, real play
+sessions) that makes a session fully autonomous.
+
+Implementation status, including what is deliberately *not* implemented, is tracked in
+[ROADMAP.md](ROADMAP.md).
 
 ## License
 

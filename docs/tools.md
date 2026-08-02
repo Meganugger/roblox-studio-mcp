@@ -1,6 +1,6 @@
 # Tool reference
 
-All 48 tools, grouped by domain. Parameters marked * are required.
+All 61 tools, grouped by domain. Parameters marked * are required.
 
 **Conventions**
 
@@ -147,8 +147,14 @@ Place name/ids, per-service child/descendant/script counts, lighting summary, sp
 locations.
 
 ### `save_project`
-`message` — Studio forbids silent plugin saves; shows a prominent in-Studio notification
-asking the user to Ctrl+S/Publish. Returns `notified`.
+`native` (default true) · `message`
+Persists the place. Studio forbids silent plugin saves, so this sends the real **Ctrl+S / ⌘S**
+to the Studio window, then pings the plugin to confirm Studio is still responsive (a place that
+has never been saved opens a Save As dialog instead — the response says so and
+`send_studio_shortcut escape` cancels it). Returns `keystrokeDelivered`, `verified`,
+`studioResponsive`, `saved` — `verified: false` means the keystroke was delivered but no plugin
+peer was connected to confirm the outcome. With `native: false`, or when native input is unavailable/disabled, it falls back to a
+prominent in-Studio notification asking the user to save.
 
 ### `export_project_snapshot`
 `includeScriptSources` (default false) · `root` · `maxNodes` (≤ 50 000)
@@ -239,6 +245,93 @@ Installs scaffolds + transitive dependencies (topologically ordered) in one atom
 Idempotent: folders reused; existing scripts skipped, or updated in place with
 `overwrite`. Follow up with `analyze_scripts` + a playtest cycle, then customize the
 generated data modules (ShopCatalog, QuestDefinitions, ProfileTemplate).
+
+---
+
+## Native host control
+
+These tools act on the machine Studio runs on, not through the plugin bridge. They are gated by
+`ROBLOX_MCP_ALLOW_NATIVE` / `ROBLOX_MCP_ALLOW_NATIVE_INPUT` and unavailable on hosts without a
+desktop. See [native-control.md](native-control.md) for the per-OS implementation, prerequisites
+and security model.
+
+### `get_host_capabilities`
+Call this first. Reports the platform and backend, whether Studio was found (and where), running
+Studio processes, per-capability availability (`processControl`, `windowControl`,
+`inputSimulation`, `screenshot`) each with the tool used or a `hint` naming the exact fix, the
+security gates, the screenshot directory and the shortcut allowlist.
+
+### `get_studio_processes`
+Running Studio processes: `pid`, process name, window title.
+
+### `launch_studio`
+`placeFilePath` · `placeId` · `waitForPlugin` (default true) · `timeoutMs` (default 180 000)
+Starts Studio, optionally opening a local place file (sandboxed path) or a cloud `placeId`, then
+waits for the plugin's **edit** peer to connect and returns it. Pass one of `placeFilePath` /
+`placeId`, not both. When no peer appears, the response explains what to check.
+
+### `close_studio`
+`force` (default false)
+Asks the Studio window to close (Studio may prompt about unsaved changes). `force: true` kills
+the process and **discards unsaved work** — call `save_project` first.
+
+### `focus_studio_window`
+Brings Studio to the foreground; returns title, position, size and `focused`.
+
+### `send_studio_shortcut`
+`shortcut`\* — one of `play` (F5), `run` (F8), `stop` (Shift+F5), `save` (Ctrl/⌘+S), `saveAs`,
+`undo`, `redo`, `escape`, `confirm`.
+Studio is focused and its window title verified before the keystroke is delivered; arbitrary
+text/keys cannot be injected. Prefer `start_play_solo` / `stop_play_solo` / `save_project`, which
+wrap these with the right waiting and verification; use this for `escape`/`confirm` (dialogs)
+and `undo`/`redo`.
+
+### `capture_studio_screenshot`
+`maxWidth` (320–3840, default 1280) · `fullScreen` (default false) · `label` ·
+`includeImage` (default true)
+Captures the Studio window (or the whole screen) to a PNG and returns it as an **image block**
+plus metadata (`path`, `width`, `height`, `bytes`, `scaled`, `via`). This is how you visually
+verify a build — frame the subject with `set_camera` first. Images above 8 MiB are saved to disk
+only.
+
+### `start_play_solo`
+`waitForPeers` (default true) · `timeoutMs` (default 90 000)
+Presses Play (F5) and waits for the playtest peers, returning `serverPeer` / `clientPeer`. Unlike
+`start_playtest` (Run mode, no player character) this is a full play session, so
+`eval_server_runtime`, `eval_client_runtime` and per-peer logs work against the real game. This
+is what makes the build → test → fix loop fully autonomous.
+
+### `stop_play_solo`
+`settleMs` (default 1500)
+Presses Stop (Shift+F5) and reports peer state afterwards.
+
+---
+
+## Place files (projects)
+
+Local `.rbxlx` / `.rbxl` management, sandboxed to `ROBLOX_MCP_PLACES_ROOT`.
+
+### `list_place_templates`
+The templates `create_place_file` can generate, plus the configured places directory and sandbox
+root.
+
+### `create_place_file`
+`name` | `path` (one of them) · `template` (`baseplate` | `flat` | `empty`, default `baseplate`) ·
+`overwrite` (default false)
+Writes a brand-new Roblox place (`.rbxlx`) without Studio being involved: `baseplate` is the
+classic 512×20×512 anchored baseplate + SpawnLocation + daylight, `flat` a 2048×4×2048 grass
+ground + SpawnLocation, `empty` just Workspace and Lighting. A bare `name` lands in the places
+directory. Follow with `launch_studio { placeFilePath }`; because a file exists, `save_project`
+then saves silently.
+
+### `open_place_file`
+`path`\* · `waitForPlugin` (default true) · `timeoutMs`
+Inspects the file first (missing / empty / not a Roblox place is reported *before* Studio is
+launched), then opens it in Studio and waits for the edit peer.
+
+### `list_place_files`
+`directory` (default: places directory) · `recursive` (default false) · `maxResults` (default 100)
+Place files newest first, with size and modification time.
 
 ---
 

@@ -4,12 +4,20 @@ This is the reference walkthrough of how an agent uses the tool suite to ship a 
 simulator game (collect → sell → upgrade loop) in one session. Tool names are real;
 payloads are abbreviated for readability.
 
-## Phase 0 — Orient
+## Phase 0 — Orient (and open Studio if needed)
 
 ```
-get_studio_status            → connected, empty baseplate
+get_studio_status            → no edit peer connected: nothing is open yet
+get_host_capabilities        → win32, Studio found, native control + input available
+create_place_file {name:"CoinSimulator", template:"baseplate"}
+                             → C:\Users\me\RobloxStudioMCP\places\CoinSimulator.rbxlx
+launch_studio {placeFilePath:"CoinSimulator.rbxlx"}
+                             → Studio boots, edit peer connects (pluginConnected: true)
 get_project_info             → Workspace: 2 children, 0 scripts anywhere
 ```
+
+If Studio is already open with the user's place, skip straight to `get_project_info` —
+`get_studio_status` tells you which situation you are in.
 
 ## Phase 1 — Level design
 
@@ -85,10 +93,27 @@ run_luau                     → probe: simulate a pickup by invoking the same s
 stop_playtest
 ```
 
+Then the real thing — a full play session with a player character, started without asking
+the user for anything:
+
+```
+start_play_solo              → F5; server peer + client peer connect
+get_errors {peer:"server"}   → none ✓
+get_errors {peer:"client"}   → ShopUI:63: attempt to index nil with 'Icon'
+patch_script_source ShopUI   → guard missing icons
+eval_server_runtime          → return CurrencyService:Get(player,"Coins")  → 0 ✓
+eval_client_runtime          → assert PlayerGui.HUD.Visible and shop button exists ✓
+stop_play_solo               → back to edit mode
+```
+
 ## Phase 6 — Ship
 
 ```
-save_project {message:"Simulator game complete — please Ctrl+S / publish"}
+set_camera {position:[90,55,90], lookAt:[0,5,0]}
+capture_studio_screenshot {label:"simulator-final"}
+                             → the agent looks at the map, spots an unlit sell pad,
+                               fixes the lighting, and captures again
+save_project                 → real Ctrl+S into CoinSimulator.rbxlx (saved: true)
 set_selection [Map, Server, Client]     → show the user what was built
 ```
 
@@ -103,3 +128,5 @@ menu + shop UI, all compile-clean and runtime-error-free.
   game-specific logic instead of re-inventing DataStore handling.
 - **The analyze → playtest → get_errors → patch loop** converts runtime stack traces
   into targeted fixes — the agent never ships a broken system.
+- **Native control** removes the human from the loop entirely: the agent opens Studio, runs a
+  real play session, looks at the result, and saves the file.

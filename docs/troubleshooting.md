@@ -84,6 +84,47 @@ type definitions flags them as unknown. Compilation (`luau-compile`) is the corr
 gate used by tests/CI. For editor analysis, use
 [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) with Roblox definitions.
 
+## Native host control problems
+
+Native tools (`launch_studio`, `capture_studio_screenshot`, `send_studio_shortcut`,
+`start_play_solo`, native `save_project`) touch the OS, so their failures are host-specific.
+**Always run `get_host_capabilities` first** — it reports each capability with the exact fix.
+
+| Message | Fix |
+| --- | --- |
+| `Native host control is disabled … ROBLOX_MCP_ALLOW_NATIVE=1` | The kill switch is off; set it to `1` and restart the server |
+| `Input simulation is disabled … ROBLOX_MCP_ALLOW_NATIVE_INPUT=0` | Shortcuts/play/native-save are blocked by config |
+| `Roblox Studio was not found on this machine` | Set `ROBLOX_MCP_STUDIO_PATH` to the Studio executable (Windows) or `.app` (macOS) |
+| `No Roblox Studio window was found` | Studio is closed or minimized; run `launch_studio` or restore the window |
+| `Refusing to send input: the focused window is "…"` | Another window has focus, or a non-Studio window matched; retry (each attempt re-focuses Studio) |
+| `macOS blocked the automation request` | Grant **Accessibility** (keystrokes) / **Screen Recording** (screenshots) to the process running the server |
+| Windows: `inputSimulation.available: false` | PowerShell 7 without .NET Windows Desktop; use `powershell.exe` (5.1) or install the runtime |
+| Linux: `xdotool is not installed` / `No screenshot tool found` | `apt install xdotool imagemagick`; an X display is required (Wayland needs XWayland) |
+| `Refusing to touch … outside the allowed place directory` | The path escapes `ROBLOX_MCP_PLACES_ROOT`; use a path inside it or widen the sandbox |
+
+### Studio launches but no peer connects
+
+`launch_studio` reports `pluginConnected: false`. In order:
+
+1. Is the plugin installed? `node server/dist/index.js --install-plugin`, then fully restart Studio.
+2. Has the plugin ever been connected? Playtest DataModels and freshly launched Studios
+   auto-connect using the **saved** token — connect once from the MCP widget in edit mode.
+3. Did the place finish loading? Large places exceed the default wait; raise `timeoutMs`.
+4. Is a dialog blocking Studio? `capture_studio_screenshot { fullScreen: true }`, then
+   `send_studio_shortcut escape`.
+
+### `save_project` says Studio stopped responding
+
+Ctrl+S on a place that has never been saved opens Studio's **Save As** dialog, which blocks the
+plugin. `send_studio_shortcut escape` cancels it. Create places with `create_place_file` (they
+already have a file, so saving is silent), or have the user save once manually.
+
+### `start_play_solo` returns `running: false`
+
+Studio never entered play mode. Check for a modal dialog (screenshot with `fullScreen: true`),
+confirm `inputSimulation` is available, and make sure the plugin has a saved token so the
+playtest DataModels can auto-connect.
+
 ## Where do errors show up?
 
 | Layer | Where to look |
@@ -95,6 +136,6 @@ gate used by tests/CI. For editor analysis, use
 
 ## Resetting to a clean state
 
-1. Disconnect in the widget; close Studio.
-2. Delete `~/.roblox-studio-mcp/` (forces a fresh token).
+1. Disconnect in the widget; close Studio (`close_studio`, or force if it is wedged).
+2. Delete `~/.roblox-studio-mcp/` (forces a fresh token; also clears saved screenshots).
 3. Restart the MCP client, copy the new token into the widget, reconnect.

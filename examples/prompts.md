@@ -3,6 +3,14 @@
 Battle-tested prompts per development role. Combine them freely — the agent keeps
 context between steps.
 
+## Starting from nothing (native host control)
+
+- "Check what you can do on this machine, then create a new baseplate place called
+  PetSimulator and open it in Studio."
+- "List my local place files and open the most recent one."
+- "Studio is showing a dialog I can't get past — take a full-screen screenshot and tell me
+  what it says."
+
 ## Orientation
 
 - "Check the Roblox Studio connection and summarize this project: services, scripts, map contents."
@@ -36,6 +44,10 @@ context between steps.
 
 - "Run a full verification pass: compile-check all scripts, playtest for 10 seconds,
   report every error with its stack trace, then fix them all and prove it's clean."
+- "Start a real play session yourself, reproduce the shop purchase, read the server and
+  client errors separately, fix the cause, and re-test until both are clean."
+- "Frame the camera on the lobby and show me a screenshot; if the lighting looks flat, fix it
+  and show me the difference."
 - "Search all scripts for deprecated APIs (wait, spawn, delay) and refactor them to task.*."
 - "The coin spawner throws an error on startup — find it, read the stack trace, fix the
   root cause, and retest."
