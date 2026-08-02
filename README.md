@@ -201,6 +201,9 @@ permissions, the rollout workflow and a manual acceptance checklist are in
 
 ## Remote URL access (URL-only AI platforms)
 
+New to this? [docs/http-mode-quickstart.md](docs/http-mode-quickstart.md) is a start-to-finish
+walkthrough: the two-ports/two-tokens model, setup, verification, and what to ask the agent for.
+
 Some AI platforms can't spawn a local process and only accept an MCP **server URL**. Run:
 
 ```bash
@@ -257,7 +260,7 @@ studio-plugin/  Roblox Studio plugin: bridge loop, executors, UI (Luau, Rojo-com
 shared/         Wire protocol, command names, property encoding (TypeScript)
 scripts/        Plugin packer (source tree → .rbxmx)
 tests/          Vitest suite incl. full-stack MCP + bridge integration tests
-docs/           Installation, usage, tool reference, native control, publishing, troubleshooting
+docs/           Installation, HTTP-mode quickstart, usage, tool reference, native control, publishing, troubleshooting
 examples/       Client configs, prompt playbooks, simulator-game walkthrough
 ```
 

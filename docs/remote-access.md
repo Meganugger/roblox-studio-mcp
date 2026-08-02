@@ -4,6 +4,10 @@ Some AI platforms cannot spawn a local MCP process over stdio — they only acce
 (Streamable HTTP MCP). This guide shows how to expose your local Roblox Studio MCP securely to
 such platforms.
 
+Setting this up for the first time? [http-mode-quickstart.md](http-mode-quickstart.md) walks
+through the whole thing end to end (including pairing Studio and verifying it works); this page is
+the reference for the tunnel and deployment options.
+
 ## How it works
 
 ```

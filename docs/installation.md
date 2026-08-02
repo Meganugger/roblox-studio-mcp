@@ -115,7 +115,8 @@ cloudflared tunnel --url http://127.0.0.1:3668    # publishes it as https://…
 
 Give the platform `https://<tunnel-host>/mcp` with header
 `Authorization: Bearer <~/.roblox-studio-mcp/http-token>`.
-Full guide: [remote-access.md](remote-access.md).
+Start-to-finish walkthrough: [http-mode-quickstart.md](http-mode-quickstart.md).
+Tunnel providers and self-hosting: [remote-access.md](remote-access.md).
 
 Ready-made files live in [`examples/client-configs/`](../examples/client-configs/).
 
