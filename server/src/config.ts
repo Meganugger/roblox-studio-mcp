@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { DEFAULT_BRIDGE_PORT, DEFAULT_MCP_HTTP_PORT } from "@roblox-studio-mcp/shared";
 import { createLogger } from "./logger.js";
@@ -26,6 +26,24 @@ export interface ServerConfig {
   allowRunLuau: boolean;
   /** Whether insert_asset (InsertService, remote content) is enabled. */
   allowInsertAsset: boolean;
+  /**
+   * Whether native host control is enabled: launching/closing Studio, focusing
+   * its window, taking screenshots and sending shortcuts.
+   */
+  allowNative: boolean;
+  /**
+   * Whether keyboard-shortcut simulation is enabled. Requires allowNative.
+   * Turning this off keeps launching and screenshots but blocks all input.
+   */
+  allowNativeInput: boolean;
+  /** Explicit Roblox Studio executable path (auto-detected when unset). */
+  studioPath?: string;
+  /** Default directory for newly created place files. */
+  placesDir: string;
+  /** Sandbox root: place tools refuse to touch anything outside it. */
+  placesRoot: string;
+  /** Where captured screenshots are written. */
+  screenshotDir: string;
   /** Maximum accepted script source size in bytes. */
   maxScriptSourceBytes: number;
   /** Maximum accepted run_luau code size in bytes. */
@@ -99,6 +117,14 @@ function parseTransport(raw: string | undefined): McpTransportKind {
 
 export function loadConfig(overrides: Partial<Pick<ServerConfig, "transport">> = {}): ServerConfig {
   const transport = overrides.transport ?? parseTransport(process.env.ROBLOX_MCP_TRANSPORT);
+  const placesDir = process.env.ROBLOX_MCP_PLACES_DIR || join(homedir(), "RobloxStudioMCP", "places");
+  const placesRoot = process.env.ROBLOX_MCP_PLACES_ROOT || homedir();
+  if (resolve(placesDir) !== resolve(placesRoot) && !resolve(placesDir).startsWith(resolve(placesRoot) + sep)) {
+    log.warn(
+      `ROBLOX_MCP_PLACES_DIR (${placesDir}) is outside ROBLOX_MCP_PLACES_ROOT (${placesRoot}); ` +
+        "place tools will reject it. Set ROBLOX_MCP_PLACES_ROOT to a directory that contains it.",
+    );
+  }
   return {
     bridgePort: parsePort(process.env.ROBLOX_MCP_PORT, DEFAULT_BRIDGE_PORT, "ROBLOX_MCP_PORT"),
     authToken: resolveAuthToken(),
@@ -109,6 +135,12 @@ export function loadConfig(overrides: Partial<Pick<ServerConfig, "transport">> =
     httpToken: transport === "http" ? resolveHttpToken() : "",
     allowRunLuau: parseBool(process.env.ROBLOX_MCP_ALLOW_RUN_LUAU, true),
     allowInsertAsset: parseBool(process.env.ROBLOX_MCP_ALLOW_INSERT_ASSET, true),
+    allowNative: parseBool(process.env.ROBLOX_MCP_ALLOW_NATIVE, true),
+    allowNativeInput: parseBool(process.env.ROBLOX_MCP_ALLOW_NATIVE_INPUT, true),
+    studioPath: process.env.ROBLOX_MCP_STUDIO_PATH?.trim() || undefined,
+    placesDir,
+    placesRoot,
+    screenshotDir: process.env.ROBLOX_MCP_SCREENSHOT_DIR || join(configDir(), "screenshots"),
     maxScriptSourceBytes: 512 * 1024,
     maxLuauCodeBytes: 256 * 1024,
   };
