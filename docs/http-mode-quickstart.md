@@ -84,12 +84,37 @@ export ROBLOX_MCP_TOKEN='a-long-random-string-for-studio'
 export ROBLOX_MCP_HTTP_TOKEN='a-different-long-random-string-for-the-ai'
 ```
 
-Each must be **at least 16 characters**. On Windows PowerShell use `$env:ROBLOX_MCP_TOKEN='…'`.
+Each must be **at least 16 characters**.
+
+On Windows, the syntax differs by shell — `cmd.exe` uses `set` with no quotes around the value:
+
+```
+set ROBLOX_MCP_TOKEN=a-long-random-string-for-studio
+set ROBLOX_MCP_HTTP_TOKEN=a-different-long-random-string-for-the-ai
+```
+
+PowerShell uses `$env:`:
+
+```powershell
+$env:ROBLOX_MCP_TOKEN='a-long-random-string-for-studio'
+$env:ROBLOX_MCP_HTTP_TOKEN='a-different-long-random-string-for-the-ai'
+```
+
+Either way the variables only apply to that terminal window, so set them in the same one you start
+the server from.
 
 ## 5. Start the server in HTTP mode
 
+Run this **from the repository root**, so the relative path resolves:
+
 ```bash
 node server/dist/index.js --transport http
+```
+
+Windows (`cmd.exe` or PowerShell):
+
+```
+node server\dist\index.js --transport http
 ```
 
 The startup log (stderr) tells you everything you need:
@@ -310,6 +335,7 @@ yourself. To rotate the AI's token, delete `~/.roblox-studio-mcp/http-token` and
 
 | Symptom | Cause and fix |
 | --- | --- |
+| `Error: Cannot find module '…\server\dist\index.js'` (`MODULE_NOT_FOUND`) | Either you have not run `npm run build` yet, or you are not in the repository root. Check with `dir server\dist\index.js` (Windows) / `ls server/dist/index.js`. If you copied a command containing `/absolute/path/to/…`, that was a placeholder — from the repo root the path is just `server/dist/index.js`. |
 | `401 Unauthorized: missing or invalid bearer token` | Wrong token — most often the **plugin** token was sent instead of the **http** one. They are different secrets. |
 | `404 not found; the MCP endpoint is /mcp` | The URL is missing the `/mcp` path. |
 | `405 Method not allowed` | `/mcp` is POST-only in stateless mode; the client should not GET it. |

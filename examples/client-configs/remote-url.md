@@ -4,9 +4,22 @@ For AI platforms that connect to an MCP **server URL** instead of spawning a loc
 
 ## 1. Start the server in HTTP mode
 
+Build once, then run from the repository root:
+
 ```bash
-node /absolute/path/to/roblox-studio-mcp/server/dist/index.js --transport http
+npm install && npm run build
+node server/dist/index.js --transport http
 ```
+
+On Windows the same command works from the project folder in either `cmd.exe` or PowerShell:
+
+```
+node server\dist\index.js --transport http
+```
+
+(`Cannot find module …\server\dist\index.js` means either you have not run `npm run build`, or you
+are not in the repository root. Unlike the JSON configs further down, this command takes a
+*relative* path — there is no placeholder to substitute.)
 
 The MCP endpoint is `http://127.0.0.1:3668/mcp`; the bearer token is printed on startup and
 persisted at `~/.roblox-studio-mcp/http-token`.

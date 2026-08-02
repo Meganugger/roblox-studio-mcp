@@ -66,6 +66,14 @@ rojo build studio-plugin -o RobloxStudioMCP.rbxmx
 
 ## 3. Register the MCP server with your AI client
 
+In the configs below, replace `/absolute/path/to/roblox-studio-mcp` with the real location of your
+clone — an MCP client spawns the server from an arbitrary working directory, so these paths must be
+absolute. On Windows, use the full drive path and **escape each backslash** inside JSON:
+`"C:\\Users\\you\\roblox-studio-mcp\\server\\dist\\index.js"`.
+
+(Commands you run yourself in a terminal are different: from the repository root just use the
+relative `node server/dist/index.js`.)
+
 ### Claude Desktop
 
 Edit `claude_desktop_config.json`
