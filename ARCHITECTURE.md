@@ -6,7 +6,7 @@
 ┌────────────────────┐  stdio ── or ── Streamable HTTP /mcp  ┌──────────────────────────┐
 │  AI Agent           │◄──────────────────────────────────────►│  MCP Server (Node.js)     │
 │  Claude / Cursor /  │        (bearer token in HTTP mode)     │  ┌────────────────────┐  │
-│  URL-only platforms │                                        │  │ Tool layer (61)    │  │
+│  URL-only platforms │                                        │  │ Tool layer (68)    │  │
 └────────────────────┘                                        │  │ zod validation     │  │
                                                                │  └─────────┬──────────┘  │
                                                                │            ▼             │
@@ -40,6 +40,13 @@
            │   Linux:   xdotool + ImageMagick (dev/test host; Studio has no Linux build)        │
            │   → launch/close Studio · focus window · allowlisted shortcuts (F5/Shift+F5/⌘S…)  │
            │     · window & screen capture (PNG → MCP image) · .rbxlx place file generation     │
+           └──────────────────────────────────────────────────────────────────────────────────┘
+
+           ┌──────────────────────────────────────────────────────────────────────────────────┐
+           │ Open Cloud layer (same process; outbound HTTPS to apis.roblox.com)                │
+           │   publish a place version (Saved / Published) · universe & place config           │
+           │   restart live servers · MessagingService publish                                 │
+           │   → gated off by default; user-supplied API key; universe allowlist                │
            └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,7 +94,7 @@ Single source of truth for:
 | Module | Responsibility |
 | --- | --- |
 | `index.ts` | Entrypoint + CLI (`--transport`, `--install-plugin`, `--print-token`); graceful shutdown |
-| `config.ts` | Env config; secret resolution (env → persisted file → generated) for both tokens |
+| `config.ts` | Env config; secret resolution (env → persisted file → generated) for both tokens; Open Cloud key resolution (env → persisted file → **absent**, never generated) |
 | `bridge/auth.ts` | Constant-time bearer-token verification |
 | `bridge/command-queue.ts` | FIFO queue bridging async tool calls to a polling peer; per-command timeouts; shutdown rejection |
 | `bridge/sessions.ts` | SessionRegistry: peer lifecycle, selector resolution (`edit`/`server`/`client`/sessionId), pruning |
@@ -95,13 +102,15 @@ Single source of truth for:
 | `transport/http-mcp.ts` | Streamable HTTP MCP endpoint (`/mcp`, stateless, bearer auth) for URL-only clients |
 | `install-plugin.ts` | OS-aware Studio plugin installer (`--install-plugin`, `MCP_PLUGINS_DIR`) |
 | `mcp/server.ts` | McpServer assembly + agent-facing usage instructions |
-| `mcp/tools/*` | 61 tools grouped by domain; zod input schemas; readable error surfaces; `docs.ts` fetches official engine reference; `native.ts`/`places.ts` expose the native host layer |
+| `mcp/tools/*` | 68 tools grouped by domain; zod input schemas; readable error surfaces; `docs.ts` fetches official engine reference; `native.ts`/`places.ts` expose the native host layer; `publish.ts` exposes the Open Cloud layer |
 | `scaffolds/*` | Production Luau gameplay templates + dependency-resolved install planner |
 | `native/host.ts` | `NativeHost` facade: security gates, shortcut allowlist, screenshot storage/inlining, capability report |
 | `native/backends/*` | One `NativeBackend` per OS (`windows.ts`, `macos.ts`, `linux.ts`) |
 | `native/runner.ts` | `execFile`-based process runner (never a shell) + the small file-system port both are injectable for tests |
 | `native/places.ts` | `.rbxlx` place generation from templates, place inspection, path sandboxing |
 | `native/shortcuts.ts` | The closed allowlist of Studio shortcuts, translated per platform |
+| `cloud/open-cloud.ts` | `OpenCloudClient` facade: publishing gate, API-key handling/redaction, universe allowlist, upload validation, HTTP-status → fix-hint mapping |
+| `cloud/http.ts` | `fetch`-based HTTPS transport behind the injectable `CloudHttpClient` port |
 
 **Tool call lifecycle:** MCP call → zod validation → connectivity check (fast, readable
 failure if Studio is offline) → `queue.dispatch(name, payload, timeout)` → command delivered
@@ -161,6 +170,39 @@ Design decisions:
   so `native/places.ts` emits it directly (service `<Item>`s, `CoordinateFrame`, `size`,
   `Color3uint8`, `Material` tokens). Studio creates any omitted service on load, which keeps
   templates small and diff-friendly.
+
+### `server/src/cloud/` — Open Cloud layer
+
+The native layer ends at the local machine: it can save a place file, but only Roblox can turn
+that file into something players load. This layer covers that last step, and is the only part of
+the server that sends anything off-box.
+
+```
+OpenCloudClient (gate, key resolution + redaction, universe allowlist, upload limits, error mapping)
+   └── CloudHttpClient  ── NodeCloudHttpClient (fetch) | FakeCloudHttpClient (tests)
+```
+
+Design decisions:
+
+- **One port, like the native layer.** Every request goes through `CloudHttpClient`, so tests
+  assert the exact method, URL, headers and body that would reach Roblox with no network access
+  and no credentials.
+- **Off by default, and a credential that is never generated.** Both tokens elsewhere in this
+  server auto-generate when missing; an Open Cloud API key deliberately does not. It is a real
+  Roblox credential that only the user can mint, so absence is a reported state (`status()` never
+  throws) rather than a silent fallback.
+- **The key never leaves the process.** Results, logs and errors carry at most a `sha256:`
+  fingerprint, and every Roblox response body is scrubbed of the key before it is surfaced.
+- **Safe default release mode.** `publish_place` defaults to `versionType: "Saved"`, which uploads
+  without releasing, so the obvious call cannot surprise a live audience. Releasing (`Published`)
+  and rolling out (`restart_universe_servers`) are separate, explicit steps.
+- **Bounded blast radius.** `ROBLOX_MCP_ALLOWED_UNIVERSES` is enforced before any request is built,
+  so a broadly scoped key cannot be pointed at the wrong experience. Uploads reuse the place-tool
+  path sandbox and are format- and size-checked first.
+- **Status codes become instructions.** 401/403/404/429 map to the concrete cause — revoked key,
+  missing permission *or* the key's IP allowlist, wrong universe/place id, per-universe rate limit
+  with its `Retry-After` — because the agent cannot fix a bare status code, and retrying a rejected
+  publish in a loop is the wrong reflex.
 
 ## Wire protocol
 
@@ -264,15 +306,25 @@ Layered defenses, each independent:
    `ROBLOX_MCP_PLACES_ROOT` with an extension whitelist; no overwrite without an explicit flag;
    and screenshots written only under `ROBLOX_MCP_SCREENSHOT_DIR`. Details in
    `docs/native-control.md`.
+8. **Publishing boundary** — the only capability whose effects reach people other than the
+   operator, so it is fenced hardest: disabled unless `ROBLOX_MCP_ALLOW_PUBLISH=1`; requires an
+   API key the server will never mint, only read (env or a `0600` file); the key is never returned,
+   logged or echoed in an error (fingerprint only, response bodies scrubbed); `versionType` defaults
+   to the non-releasing `Saved`; `ROBLOX_MCP_ALLOWED_UNIVERSES` bounds which experiences can be
+   touched; uploads are confined to the place sandbox, validated as real places and size-capped;
+   and `publish_universe_message` can only deliver a string to a topic the game already subscribes
+   to, never execute remote code. Details in `docs/publishing.md`.
 
 **Trust model:** the MCP client is trusted (it is the operator's own AI agent); Studio
 content is semi-trusted (catalog assets may be malicious → scripts stripped); the network
 is untrusted (hence localhost + token). `run_luau` is intentionally powerful — it is the
 escape hatch that makes full autonomy possible — and is governed by the kill-switch env
 flag plus Studio's own plugin sandbox (plugin security level, no filesystem/OS access).
-The native layer deliberately steps outside that sandbox — it is the only part of the system
-that can affect anything other than the open place — which is why it is the only part with two
-kill switches, an action allowlist and a path sandbox.
+The native layer deliberately steps outside that sandbox — it can affect the machine rather than
+just the open place — which is why it has two kill switches, an action allowlist and a path
+sandbox. The Open Cloud layer reaches further still, to people who never consented to the agent
+at all, so it is the only capability that ships disabled and additionally requires a credential
+the operator must create by hand.
 
 ## Scaffold library design
 
@@ -313,6 +365,18 @@ Scaffolds are complete Luau systems (not snippets) installed via one atomic batc
   display and a real window titled like Studio — discovery, activation (including the
   no-window-manager fallback), keystroke delivery, and PNG capture/downscale verified by PNG
   signature. It self-skips without a display; CI runs it under Xvfb.
+- **Open Cloud:** the client is driven through an injected transport, asserting the exact method,
+  URL, headers and body of every endpoint (publish `versionType`, XML vs binary content type,
+  `updateMask` built only from supplied fields, the `:restartServers` / `:publishMessage` custom
+  methods), the gate, the universe allowlist, upload validation, status-to-fix-hint mapping for
+  400/401/403/404/409/429/5xx, and that the API key never appears in a status report, error body or
+  log. A full-stack suite drives the publish tools through a real MCP client with real place files
+  on disk, covering the `Saved` default, sandbox and file-format refusals, byte-for-byte upload
+  fidelity, and the gate/allowlist refusals. Config tests cover key resolution (env, file,
+  truncated, absent — never generated) and the env parsing of the gate, ids, allowlist and limits.
+- **Open Cloud (live):** `tests/cloud-live-http.test.ts` drives the *real* `fetch` transport over
+  real TCP against a local HTTP server — headers arriving, a binary place body surviving
+  byte-for-byte, response status/header parsing, timeout and unreachable-host handling.
 - **Places:** generated `.rbxlx` is parsed with a real XML parser and asserted structurally
   (services, instance properties, unique referents), plus path-sandbox escapes, extension
   rules, overwrite protection, inspection of xml/binary/corrupt files and listing/pagination.
@@ -321,4 +385,6 @@ Scaffolds are complete Luau systems (not snippets) installed via one atomic batc
 - **Artifact:** the `.rbxmx` packer output is validated for structure and XML safety.
 - **Smoke:** `npm run smoke` boots the *built* server over the real Streamable HTTP transport
   and checks auth rejection, the full tool list, host-capability reporting, real place-file
-  creation, sandbox refusal and stdout cleanliness. CI runs it on Ubuntu, Windows and macOS.
+  creation, sandbox refusal and stdout cleanliness, and asserts that publishing really is disabled
+  in a default install (gate off, no key invented, `publish_place` refuses). CI runs it on Ubuntu,
+  Windows and macOS.

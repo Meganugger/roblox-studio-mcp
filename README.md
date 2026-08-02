@@ -13,6 +13,7 @@ With this project connected, an AI assistant (Claude, Cursor, Claude Code, or an
 - 🐞 **Runtime debugging** — during play-solo / multiplayer tests every DataModel connects as its own peer: `eval_server_runtime` / `eval_client_runtime` inspect **live game state mid-playtest**, per-peer `get_output_logs` / `get_errors` read each side's logs (including boot-time prints), and `set_log_breakpoint` instruments code without pausing
 - 🧪 **Test & debug loop** — start/stop playtests, read output logs and errors *with Luau stack traces*, fix, and retest — fully autonomously
 - 📚 **Official API docs** — `get_roblox_docs` fetches real Roblox engine reference (classes, datatypes, enums) so the agent checks `ProximityPrompt` or `CFrame` semantics instead of hallucinating them
+- 🚀 **Ships to Roblox** — `publish_place` uploads the saved place to your experience through Open Cloud (safe `Saved` default, explicit `Published` to release), plus `update_place_config`, `restart_universe_servers` and MessagingService live-ops. Off by default and gated behind your own API key ([docs/publishing.md](docs/publishing.md))
 - 🌍 **World building** — procedural terrain (Perlin-noise hills, blocks, spheres), lighting presets, catalog asset insertion, camera control
 - 🧩 **Game system scaffolds** — one command installs production-grade systems: DataStore player profiles, currencies, inventory, shop, quests, progression + achievements, global leaderboards, combat, NPCs, round/matchmaking loops, settings, and a themed UI kit (HUD, menus, notifications)
 - 🌐 **Every MCP client** — stdio for local clients (Claude Code, Claude Desktop, Cursor, Codex, Gemini) **plus a Streamable HTTP transport (`--transport http`) for AI platforms that only accept a server URL**, publishable through Cloudflare Tunnel / ngrok / Tailscale ([docs/remote-access.md](docs/remote-access.md))
@@ -118,7 +119,7 @@ profiles/currency/shop/quests/UI with `install_scaffold`, write game-specific sc
 `analyze_scripts → start_playtest → get_errors → fix → retest` until everything runs clean.
 A full walkthrough lives in [`examples/simulator-game.md`](examples/simulator-game.md).
 
-## Tool suite (61 tools)
+## Tool suite (68 tools)
 
 | Category | Tools |
 | --- | --- |
@@ -133,6 +134,7 @@ A full walkthrough lives in [`examples/simulator-game.md`](examples/simulator-ga
 | Reference | `get_roblox_docs` |
 | Native host | `get_host_capabilities`, `get_studio_processes`, `launch_studio`, `close_studio`, `focus_studio_window`, `send_studio_shortcut`, `capture_studio_screenshot`, `start_play_solo`, `stop_play_solo` |
 | Place files | `list_place_templates`, `create_place_file`, `open_place_file`, `list_place_files` |
+| Publishing (Open Cloud) | `get_publish_capabilities`, `publish_place`, `get_universe_info`, `get_place_info`, `update_place_config`, `restart_universe_servers`, `publish_universe_message` |
 
 Full reference with parameters and examples: [docs/tools.md](docs/tools.md).
 
@@ -175,6 +177,28 @@ every keystroke, and place paths sandboxed to `ROBLOX_MCP_PLACES_ROOT`. Prerequi
 commands each backend runs, and a manual acceptance checklist are in
 [docs/native-control.md](docs/native-control.md).
 
+## Publishing to Roblox (Open Cloud)
+
+The agent can also ship the result, so the loop ends on the platform instead of on disk:
+
+```
+get_publish_capabilities                            → gate on? key loaded? right universe?
+save_project                                        → real Ctrl+S writes the .rbxlx
+publish_place  path="PetSim.rbxlx"                  → uploads a Saved version; players unaffected
+publish_place  path="PetSim.rbxlx" versionType="Published"  → new servers get the build
+restart_universe_servers                            → moves current players onto it
+update_place_config  description="…"                → listing details
+publish_universe_message topic="liveops" message="…" → MessagingService live-ops
+```
+
+Security: this is the only capability that reaches real players, so it is **disabled by default**.
+It needs `ROBLOX_MCP_ALLOW_PUBLISH=1` plus an Open Cloud API key that you mint yourself — the
+server never generates one, never prints it back (only a `sha256:` fingerprint), scrubs it from
+error bodies, defaults to the non-releasing `Saved` version type, and honours a universe allowlist
+(`ROBLOX_MCP_ALLOWED_UNIVERSES`) that bounds a broad key. Key creation, the required API-key
+permissions, the rollout workflow and a manual acceptance checklist are in
+[docs/publishing.md](docs/publishing.md).
+
 ## Remote URL access (URL-only AI platforms)
 
 Some AI platforms can't spawn a local process and only accept an MCP **server URL**. Run:
@@ -216,18 +240,24 @@ Environment variables read by the server:
 | `ROBLOX_MCP_PLACES_DIR` | `~/RobloxStudioMCP/places` | Where `create_place_file` writes new places |
 | `ROBLOX_MCP_PLACES_ROOT` | home directory | Sandbox root: place tools refuse paths outside it |
 | `ROBLOX_MCP_SCREENSHOT_DIR` | `~/.roblox-studio-mcp/screenshots` | Where screenshots are written |
+| `ROBLOX_MCP_ALLOW_PUBLISH` | `0` | Set `1` to enable the Open Cloud publish tools (they reach live players) |
+| `ROBLOX_MCP_OPEN_CLOUD_KEY` | *(none)* | Open Cloud API key; or write it to `~/.roblox-studio-mcp/open-cloud-key`. Never generated, never printed back |
+| `ROBLOX_MCP_UNIVERSE_ID` | *(none)* | Default universe (experience) id for the publish tools |
+| `ROBLOX_MCP_PLACE_ID` | *(none)* | Default place id for the publish tools |
+| `ROBLOX_MCP_ALLOWED_UNIVERSES` | *(any)* | Comma-separated universe allowlist; other universes are refused even if the key can reach them |
+| `ROBLOX_MCP_MAX_PLACE_UPLOAD_BYTES` | `104857600` | Upload size limit for `publish_place` |
 | `ROBLOX_MCP_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `MCP_PLUGINS_DIR` | OS default | Override Studio plugins folder for `--install-plugin` |
 
 ## Repository layout
 
 ```
-server/         MCP server: tools, HTTP bridge, auth, scaffold library, native host layer (TypeScript)
+server/         MCP server: tools, HTTP bridge, auth, scaffold library, native host + Open Cloud layers (TypeScript)
 studio-plugin/  Roblox Studio plugin: bridge loop, executors, UI (Luau, Rojo-compatible)
 shared/         Wire protocol, command names, property encoding (TypeScript)
 scripts/        Plugin packer (source tree → .rbxmx)
 tests/          Vitest suite incl. full-stack MCP + bridge integration tests
-docs/           Installation, usage, tool reference, native control, troubleshooting
+docs/           Installation, usage, tool reference, native control, publishing, troubleshooting
 examples/       Client configs, prompt playbooks, simulator-game walkthrough
 ```
 
@@ -235,8 +265,8 @@ examples/       Client configs, prompt playbooks, simulator-game walkthrough
 
 ```bash
 npm run typecheck   # strict TS across workspaces
-npm test            # 150 tests: unit, native backends (per-OS argv), multi-peer bridge,
-                    # HTTP transport, full-stack MCP client, live X11 native verification
+npm test            # 222 tests: unit, native backends (per-OS argv), Open Cloud wire format,
+                    # multi-peer bridge, HTTP transport, full-stack MCP client, live X11
 npm run build       # server + shared + plugin artifact
 npm run smoke       # boot the built server over real HTTP and exercise the tool surface
 ```

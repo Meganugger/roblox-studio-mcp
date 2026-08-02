@@ -12,6 +12,7 @@ import { registerScaffoldTools } from "./tools/scaffold.js";
 import { registerDocsTools } from "./tools/docs.js";
 import { registerNativeTools } from "./tools/native.js";
 import { registerPlaceTools } from "./tools/places.js";
+import { registerPublishTools } from "./tools/publish.js";
 import { SERVER_VERSION } from "../version.js";
 
 export const SERVER_INSTRUCTIONS = `Roblox Studio MCP gives you full control of a live Roblox Studio session.
@@ -28,12 +29,14 @@ Recommended workflow:
 7. Runtime debugging: during a playtest, each DataModel connects as its own peer (get_connected_peers). Use eval_server_runtime / eval_client_runtime to inspect live game state, per-peer get_output_logs / get_errors to read each side's logs, and set_log_breakpoint to instrument suspicious code paths without pausing. You can start a real player session yourself with start_play_solo (no human needed) and end it with stop_play_solo.
 8. Look at your work: capture_studio_screenshot returns an image of the Studio window, so you can visually check geometry, lighting and UI instead of guessing. Frame it first with set_camera.
 9. When finished, call save_project (it sends the real Ctrl+S) so the work is persisted.
+10. Shipping to Roblox (only when the user asks): get_publish_capabilities first, then publish_place on the saved file. It defaults to versionType="Saved", which uploads without releasing; only pass "Published" when the user wants players to get it, and only call restart_universe_servers when they accept disconnecting everyone currently playing.
 
 Notes:
 - Instance paths look like "game.Workspace.Map.Spawn"; duplicate names can be indexed: "game.Workspace.Part[2]".
 - Typed property values use tagged JSON, e.g. {"$type":"Vector3","value":[0,10,0]} or "Enum.Material.Neon".
 - start_playtest runs Studio "Run" mode (server simulation, no player character) in the edit peer; start_play_solo presses F5 for a full play session with a player character, which adds server/client peers.
-- Native host tools (launch_studio, send_studio_shortcut, capture_studio_screenshot, start_play_solo, native save) act on the user's machine. They can be disabled by configuration and are unavailable on hosts without a desktop; get_host_capabilities always explains exactly why something is unavailable, so report that instead of retrying.`;
+- Native host tools (launch_studio, send_studio_shortcut, capture_studio_screenshot, start_play_solo, native save) act on the user's machine. They can be disabled by configuration and are unavailable on hosts without a desktop; get_host_capabilities always explains exactly why something is unavailable, so report that instead of retrying.
+- The publish tools reach real players and are disabled by default (they need ROBLOX_MCP_ALLOW_PUBLISH=1 plus the user's Open Cloud API key). When they are unavailable, or an API key lacks a permission, report the exact fix from the error and stop - never retry a rejected publish in a loop.`;
 
 export function createMcpServer(ctx: ToolContext): McpServer {
   const server = new McpServer(
@@ -58,6 +61,7 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   registerDocsTools(server, ctx);
   registerNativeTools(server, ctx);
   registerPlaceTools(server, ctx);
+  registerPublishTools(server, ctx);
 
   return server;
 }

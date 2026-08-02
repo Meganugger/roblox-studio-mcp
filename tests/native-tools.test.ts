@@ -19,7 +19,7 @@ import { NativeHost } from "../server/src/native/host.js";
 import { ServerConfig } from "../server/src/config.js";
 import { FakePlugin } from "./helpers/fake-plugin.js";
 import { FakeCommandRunner, FakeFileSystem } from "./helpers/fake-native.js";
-import { makeConfig, makeNativeConfig } from "./helpers/test-context.js";
+import { makeCloudClient, makeConfig, makeNativeConfig } from "./helpers/test-context.js";
 
 const TOKEN = "native-tools-token-123456";
 const STUDIO_EXE = "/opt/roblox/RobloxStudioBeta.exe";
@@ -95,7 +95,7 @@ describe("native host and place tools", () => {
       config: makeNativeConfig({ screenshotDir: join(placesDir, "shots"), studioPath: STUDIO_EXE }),
     });
 
-    const server = createMcpServer({ sessions, bridge, config, native });
+    const server = createMcpServer({ sessions, bridge, config, native, cloud: makeCloudClient() });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "native-test-client", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -333,7 +333,7 @@ describe("native host and place tools", () => {
       env: { DISPLAY: ":0" },
       config: makeNativeConfig({ allowNativeInput: false, screenshotDir: join(placesDir, "shots") }),
     });
-    const server = createMcpServer({ sessions, bridge, config: makeConfig({ authToken: TOKEN }), native });
+    const server = createMcpServer({ sessions, bridge, config: makeConfig({ authToken: TOKEN }), native, cloud: makeCloudClient() });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "fallback-client", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

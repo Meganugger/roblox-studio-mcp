@@ -11,7 +11,8 @@ agent from "can edit an open place" into "can run a full development session by 
 | `save_project` could only ask the user to press Ctrl+S | `save_project` sends the real Ctrl+S |
 
 Everything else (Explorer, scripts, terrain, scaffolds, runtime eval) works over the plugin
-bridge and needs none of this.
+bridge and needs none of this. Getting the saved place onto Roblox is the next layer up:
+[publishing.md](publishing.md).
 
 ## Start here: `get_host_capabilities`
 
